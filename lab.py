@@ -19,6 +19,7 @@ __all__ = [ # things imported when you do "from lab import *"
 	'etastr',
 	'num2si',
 	'mme',
+	'unicode_pm',
 	'xe',
 	'xep'
 ]
@@ -466,7 +467,9 @@ def _find_scale_idx(scale, scales):
 	return -1
 
 _util_mm_esr_data = dict(
-	digital=dict(
+	# multimeter Digimaster DM 3900 plus
+	dm3900=dict(
+		type='digital',
 		volt=dict(
 			scales=[0.2, 2, 20, 200, 1000],
 			perc=[0.5] * 4 + [0.8],
@@ -493,7 +496,72 @@ _util_mm_esr_data = dict(
 			digit=[3, 1, 1, 1, 1, 2]
 		)
 	),
-	analog=dict(
+	# multimeter from lab III course
+	lab3=dict(
+		type='digital',
+		volt=dict(
+			scales=[0.2, 2, 20, 200, 1000],
+			perc=[0.5] * 4 + [0.8],
+			digit=[1, 1, 1, 1, 2]
+		),
+		volt_ac=dict(
+			scales=[0.2, 2, 20, 200, 700],
+			perc=[1.2, 0.8, 0.8, 0.8, 1.2],
+			digit=[3] * 5
+		),
+		ampere=dict(
+			scales=[2e-3, 20e-3, 0.2, 10],
+			perc=[0.8, 0.8, 1.5, 2.0],
+			digit=[1, 1, 1, 5]
+		),
+		ampere_ac=dict(
+			scales=[2e-3, 20e-3, 0.2, 10],
+			perc=[1, 1, 1.8, 3],
+			digit=[3, 3, 3, 7]
+		),
+		ohm=dict(
+			scales=[2 * 10**z for z in range(2, 9)],
+			perc=[0.8] * 5 + [1, 5],
+			digit=[3, 1, 1, 1, 1, 2, 10]
+		),
+		farad=dict(
+			scales=[2e-9 * 10**z for z in range(1, 6)],
+			perc=[4] * 5,
+			digit=[3] * 5
+		)
+	),
+	# multimeter GBC Mod. KDM-700NCV
+	kdm700=dict(
+		type='digital',
+		volt=dict(
+			scales=[0.2, 2, 20, 200, 1000],
+			perc=[0.5] * 4 + [0.8],
+			digit=[1, 1, 1, 1, 2]
+		),
+		volt_ac=dict(
+			scales=[0.2, 2, 20, 200, 700],
+			perc=[1.2, 0.8, 0.8, 0.8, 1.2],
+			digit=[3] * 5
+		),
+		ampere=dict(
+			scales=[2 * 10**z for z in range(-5, 0)] + [10],
+			perc=[2, 0.8, 0.8, 0.8, 1.5, 2],
+			digit=[5, 1, 1, 1, 1, 5]
+		),
+		ampere_ac=dict(
+			scales=[2 * 10**z for z in range(-5, 0)] + [10],
+			perc=[2, 1, 1, 1, 1.8, 3],
+			digit=[5] * 5 + [7]
+		),
+		ohm=dict(
+			scales=[2 * 10**z for z in range(2, 9)],
+			perc=[0.8] * 5 + [1, 5],
+			digit=[3, 1, 1, 1, 1, 2, 10]
+		)
+	),
+	# multimeter ICE SuperTester 680R VII serie
+	ice680=dict(
+		type='analog',
 		volt=dict(
 			scales=[0.1, 2, 10, 50, 200, 500, 1000],
 			relres=[50] * 7,
@@ -516,37 +584,61 @@ _util_mm_esr_data = dict(
 			valg=[2] * 5,
 			cdt=[2, 1.5, 1.6, 1.6, 1.9]
 		)
+	),
+	# oscilloscope from lab III course
+	oscil=dict(
+		type='oscil',
+		volt=dict(
+			scales=[ (8*d*10**s) for s in range(-3, 1) for d in [1, 2, 5] ],
+			perc=[4] * 2 + [3] * 10,
+			div=[ (d*10**s) for s in range(-3, 1) for d in [1, 2, 5] ]
+		),
+		time=dict(
+			scales=[5e-09] + [ (10*d*10**s) for s in range(-9, 2) for d in [1, 2.5, 5] ]
+
+		),
+		freq=dict(
+			scales=[1e9]
+		),
+		generic=dict(
+		)
 	)
 )
 
-def util_mm_er(x, scale, metertype='digital', unit='volt'):
+def util_mm_er(x, scale, metertype='lab3', unit='volt', sqerr=False):
 	"""
-		Returns the uncertainty of x and the internal resistance of the multimeter.
-		
-		Parameters
-		----------
-		x : number
-			the value measured, may be negative
-		metertype : string
-			one of 'digital', 'analog'
-			the multimeter used
-		unit : string
-			one of 'volt', 'volt_ac', 'ampere' 'ampere_ac', 'ohm'
-			the unit of measure of x
-		scale : number
-			the fullscale used to measure x
-		
-		Returns
-		-------
-		e : number
-			the uncertainty
-		r : number or None
-			the internal resistance (if applicable)
+	Returns the uncertainty of x and the internal resistance of the multimeter.
+	
+	Parameters
+	----------
+	x : number
+		the value measured, may be negative
+	metertype : string
+		one of 'dm3900', 'kdm700', 'ice680', 'lab3', 'oscil'
+		the multimeter used
+	unit : string
+		one of 'volt', 'volt_ac', 'ampere' 'ampere_ac', 'ohm', 'farad'
+		the unit of measure of x
+	scale : number
+		the fullscale used to measure x
+	sqerr : bool
+		If True, sum errors squaring.
+	
+	Returns
+	-------
+	e : number
+		the uncertainty
+	r : number or None
+		the internal resistance (if applicable)
 	"""
 	
 	x = abs(x)
 	
-	info = _util_mm_esr_data[metertype][unit]
+	errsum = (lambda x, y: math.sqrt(x**2 + y**2)) if sqerr else (lambda x, y: x + y)
+	
+	meter = _util_mm_esr_data[metertype]
+	info = meter[unit]
+	typ = meter['type']
 	
 	s = scale
 	idx = _find_scale_idx(s, info['scales'])
@@ -554,92 +646,99 @@ def util_mm_er(x, scale, metertype='digital', unit='volt'):
 		raise KeyError(s)
 	r = None
 	
-	if metertype == 'digital':
-		e = x * info['perc'][idx] / 100.0 + info['digit'][idx] * 10**(idx + math.log10(info['scales'][0] / 2.0) - 3)
+	if typ == 'digital':
+		e = errsum(x * info['perc'][idx] / 100.0, info['digit'][idx] * 10**(idx + math.log10(info['scales'][0] / 2.0) - 3))
 		if unit == 'volt' or unit == 'volt_ac':
 			r = 10e+6
 		elif unit == 'ampere' or unit == 'ampere_ac':
 			r = 0.2 / s
-	elif metertype == 'analog':
-		e = x * np.sqrt((0.5 / info['relres'][idx])**2 + (info['valg'][idx] / 100.0 * s)**2)
+	elif typ == 'analog':
+		e = x * errsum(0.5 / info['relres'][idx], info['valg'][idx] / 100.0 * s)
 		if unit == 'volt' or unit == 'volt_ac':
 			r = 20000 * s
 		elif unit == 'ampere' or unit == 'ampere_ac':
 			r = info['cdt'][idx] / s
-	
+	elif typ == 'oscil':
+		e = info['div'][idx]/25
+		r = 10e6
+		
 	return e, r
 
-def util_mm_esr(x, metertype='digital', unit='volt'):
+def util_mm_esr(x, metertype='lab3', unit='volt', sqerr=False):
 	"""
-		determines the fullscale used to measure x with a multimeter,
-		supposing the lowest possible fullscale was used, and returns the
-		uncertainty, the fullscale and the internal resistance.
-		
-		Parameters
-		----------
-		x : number
-			the value measured, may be negative
-		metertype : string
-			one of 'digital', 'analog'
-			the multimeter used
-		unit : string
-			one of 'volt', 'volt_ac', 'ampere' 'ampere_ac', 'ohm'
-			the unit of measure of x
-		
-		Returns
-		-------
-		e : number
-			the uncertainty
-		s : number
-			the full-scale
-		r : number or None
-			the internal resistance (if applicable)
+	determines the fullscale used to measure x with a multimeter,
+	supposing the lowest possible fullscale was used, and returns the
+	uncertainty, the fullscale and the internal resistance.
+	
+	Parameters
+	----------
+	x : number
+		the value measured, may be negative
+	metertype : string
+		one of 'dm3900', 'kdm700', 'ice680', 'lab3', 'oscil'
+		the multimeter used
+	unit : string
+		one of 'volt', 'volt_ac', 'ampere' 'ampere_ac', 'ohm', 'farad'
+		the unit of measure of x
+	sqerr : bool
+		If True, sum errors squaring.
+	
+	Returns
+	-------
+	e : number
+		the uncertainty
+	s : number
+		the full-scale
+	r : number or None
+		the internal resistance (if applicable)
 	"""
 	
 	x = abs(x)
 	info = _util_mm_esr_data[metertype][unit]
 	idx = _find_scale(x, info['scales'])
 	s = info['scales'][idx]
-	e, r = util_mm_er(x, s, metertype=metertype, unit=unit)
+	e, r = util_mm_er(x, s, metertype=metertype, unit=unit, sqerr=sqerr)
 	return e, s, r
 
-_util_mm_esr_vect_error = np.vectorize(lambda x, y, z: util_mm_esr(x, metertype=y, unit=z)[0], otypes=[np.number])
-_util_mm_esr_vect_scale = np.vectorize(lambda x, y, z: util_mm_esr(x, metertype=y, unit=z)[1], otypes=[np.number])
-_util_mm_esr_vect_res = np.vectorize(lambda x, y, z: util_mm_esr(x, metertype=y, unit=z)[2], otypes=[np.number])
+_util_mm_esr_vect_error = np.vectorize(lambda x, y, z, t: util_mm_esr(x, metertype=y, unit=z, sqerr=t)[0], otypes=[np.number])
+_util_mm_esr_vect_scale = np.vectorize(lambda x, y, z, t: util_mm_esr(x, metertype=y, unit=z, sqerr=t)[1], otypes=[np.number])
+_util_mm_esr_vect_res = np.vectorize(lambda x, y, z, t: util_mm_esr(x, metertype=y, unit=z, sqerr=t)[2], otypes=[np.number])
 _util_mm_esr2_what = dict(
 	error=_util_mm_esr_vect_error,
 	scale=_util_mm_esr_vect_scale,
 	res=_util_mm_esr_vect_res
 )
 
-def util_mm_esr2(x, metertype='digital', unit='volt', what='error'):
+def util_mm_esr2(x, metertype='lab3', unit='volt', what='error', sqerr=False):
 	"""
-		determines the fullscale used to measure x with a multimeter,
-		supposing the lowest possible fullscale was used, and returns the
-		uncertainty or the fullscale or the internal resistance.
-		
-		Parameters
-		----------
-		x : (X-shaped array of) number 
-			the value measured, may be negative
-		metertype : (X-shaped array of) string
-			one of 'digital', 'analog'
-			the multimeter used
-		unit : (X-shaped array of) string
-			one of 'volt', 'volt_ac', 'ampere' 'ampere_ac', 'ohm'
-			the unit of measure of x
-		what : (X-shaped array of) string
-			one of 'error', 'scale', 'res'
-			what to return
-		
-		Returns
-		-------
-		z : (X-shaped array of) number
-			either the uncertainty, the fullscale or the internal resistance.
+	determines the fullscale used to measure x with a multimeter,
+	supposing the lowest possible fullscale was used, and returns the
+	uncertainty or the fullscale or the internal resistance.
+	
+	Parameters
+	----------
+	x : (X-shaped array of) number 
+		the value measured, may be negative
+	metertype : (X-shaped array of) string
+		one of 'dm3900', 'kdm700', 'ice680', 'lab3', 'oscil'
+		the multimeter used
+	unit : (X-shaped array of) string
+		one of 'volt', 'volt_ac', 'ampere' 'ampere_ac', 'ohm', 'farad'
+		the unit of measure of x
+	what : (X-shaped array of) string
+		one of 'error', 'scale', 'res'
+		what to return
+	sqerr : bool
+		If True, sum errors squaring.
+	
+	Returns
+	-------
+	z : (X-shaped array of) number
+		either the uncertainty, the fullscale or the internal resistance.
 	"""
 	if unit == 'ohm' and what == 'res':
 		raise ValueError('asking internal resistance of ohmmeter')
-	return _util_mm_esr2_what[what](x, metertype, unit)
+	return _util_mm_esr2_what[what](x, metertype, unit, sqerr)
 
 # *********************** FORMATTING *************************
 
@@ -708,7 +807,7 @@ def util_format_comp(x, e, compact=False):
 		return "%.3g" % x, "%.3g" % e
 	return _format_epositive(x, e, not compact)
 
-def util_format(x, e, pm='+-', percent=False):
+def util_format(x, e, pm=None, percent=False):
 	"""
 	format a value with its uncertainty
 	
@@ -914,29 +1013,31 @@ def num2si(x, format='%g', si=True, space=' '):
 
 # ************************ SHORTCUTS ******************************
 
-def mme(x, unit, metertype='digital'):
+def mme(x, unit, metertype='lab3', sqerr=False):
 	"""
-		determines the fullscale used to measure x with a multimeter,
-		supposing the lowest possible fullscale was used, and returns the
-		uncertainty of the measurement.
-		
-		Parameters
-		----------
-		x : (X-shaped array of) number 
-			the value measured, may be negative
-		unit : (X-shaped array of) string
-			one of 'volt', 'volt_ac', 'ampere' 'ampere_ac', 'ohm'
-			the unit of measure of x
-		metertype : (X-shaped array of) string
-			one of 'digital', 'analog'
-			the multimeter used
-		
-		Returns
-		-------
-		e : (X-shaped array of) number
-			the uncertainty
+	determines the fullscale used to measure x with a multimeter,
+	supposing the lowest possible fullscale was used, and returns the
+	uncertainty of the measurement.
+	
+	Parameters
+	----------
+	x : (X-shaped array of) number 
+		the value measured, may be negative
+	unit : (X-shaped array of) string
+		one of 'volt', 'volt_ac', 'ampere' 'ampere_ac', 'ohm', 'farad'
+		the unit of measure of x
+	metertype : (X-shaped array of) string
+		one of 'dm3900', 'kdm700', 'ice680', 'lab3', 'oscil'
+		the multimeter used
+	sqerr : bool
+		If True, sum errors squaring.
+	
+	Returns
+	-------
+	e : (X-shaped array of) number
+		the uncertainty
 	"""
-	return util_mm_esr2(x, metertype=metertype, unit=unit, what='error')
+	return util_mm_esr2(x, metertype=metertype, unit=unit, what='error', sqerr=sqerr)
 
 _util_format_vect = np.vectorize(util_format, otypes=[str])
 
@@ -953,7 +1054,7 @@ def xe(x, e, pm=None):
 	e : (X-shaped array of) number
 		the uncertainty
 	pm : string, optional
-		the "plusminus" symbol
+		the "plusminus" symbol; if None use compact notation.
 	
 	Returns
 	-------
@@ -977,7 +1078,7 @@ def xep(x, e, pm=None):
 	e : (X-shaped array of) number
 		the uncertainty
 	pm : string, optional
-		the "plusminus" symbol
+		the "plusminus" symbol; if None use compact notation.
 	
 	Returns
 	-------
