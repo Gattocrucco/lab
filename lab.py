@@ -957,7 +957,7 @@ def etastr(eta, progress):
 
 # this function taken from stackoverflow and modified
 # http://stackoverflow.com/questions/17973278/python-decimal-engineering-notation-for-mili-10e-3-and-micro-10e-6
-def num2si(x, format='%g', si=True, space=' '):
+def num2si(x, format='%.16g', si=True, space=' '):
 	"""
 	Returns x formatted in a simplified engineering format -
 	using an exponent that is a multiple of 3.
@@ -967,7 +967,7 @@ def num2si(x, format='%g', si=True, space=' '):
 	x : number
 		the number to format
 	format : string
-		printf-style string used to format the value before the exponent
+		printf-style string used to format the mantissa
 	si : boolean
 		if true, use SI suffix for exponent, e.g. k instead of e3, n instead of
 		e-9 etc. If the exponent would be greater than 24, numerical exponent is
@@ -988,28 +988,28 @@ def num2si(x, format='%g', si=True, space=' '):
 	       123 |  123
 	    1230.0 |  1.23 k
 	-1230000.0 |  -1.23 M
+	         0 |  0
 	
 	See also
 	--------
 	util_format, util_format_comp, xe, xep
 	"""
-	sign = ''
 	x = float(x)
-	if x < 0:
-		x = -x
-		sign = '-'
-	exp = int( math.floor( math.log10( x)))
-	exp3 = exp - ( exp % 3)
-	x3 = x / ( 10 ** exp3)
+	if x == 0:
+		return format % x
+	exp = int(math.floor(math.log10(abs(x))))
+	exp3 = exp - (exp % 3)
+	x3 = x / (10 ** exp3)
 	
 	if si and exp3 >= -24 and exp3 <= 24 and exp3 != 0:
 		exp3_text = 'yzafpnum kMGTPEZY'[(exp3 - (-24)) // 3]
 	elif exp3 == 0:
 		exp3_text = ''
+		space = ''
 	else:
 		exp3_text = 'e%s' % exp3
 	
-	return ('%s'+format+'%s%s') % (sign, x3, space, exp3_text)
+	return (format + '%s%s') % (x3, space, exp3_text)
 
 # ************************ SHORTCUTS ******************************
 
