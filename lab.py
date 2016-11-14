@@ -24,6 +24,8 @@ __all__ = [ # things imported when you do "from lab import *"
 	'xep'
 ]
 
+__version__ = '2016.11.14'
+
 # ************************** FIT ***************************
 
 def _check_finite(array): # asarray_chkfinite is absent in old numpies
