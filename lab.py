@@ -747,7 +747,7 @@ def util_mm_esr2(x, metertype='lab3', unit='volt', what='error', sqerr=False):
 d = lambda x, n: int(("%.*e" % (n - 1, abs(x)))[0])
 ap = lambda x, n: float("%.*e" % (n - 1, x))
 nd = lambda x: math.floor(math.log10(x)) + 1
-def _format_epositive(x, e, esep=True):
+def _format_epositive(x, e, esep=True, minexp=3):
 	if d(e, 2) < 3:
 		n = 2
 		e = ap(e, 2)
@@ -766,7 +766,7 @@ def _format_epositive(x, e, esep=True):
 	nx = n + dn
 	if nx > 0:
 		ex = nd(abs(x)) - 1
-		if nx > ex:
+		if nx > ex and abs(ex) <= minexp:
 			xd = nx - ex - 1
 			ex = 0
 		else:
