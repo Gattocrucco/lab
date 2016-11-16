@@ -21,7 +21,8 @@ __all__ = [ # things imported when you do "from lab import *"
 	'mme',
 	'unicode_pm',
 	'xe',
-	'xep'
+	'xep',
+	'util_format'
 ]
 
 __version__ = '2016.11.14'
@@ -469,8 +470,8 @@ def _find_scale_idx(scale, scales):
 	return -1
 
 _util_mm_esr_data = dict(
-	# multimeter Digimaster DM 3900 plus
 	dm3900=dict(
+		desc='multimeter Digimaster DM 3900 plus',
 		type='digital',
 		volt=dict(
 			scales=[0.2, 2, 20, 200, 1000],
@@ -498,8 +499,8 @@ _util_mm_esr_data = dict(
 			digit=[3, 1, 1, 1, 1, 2]
 		)
 	),
-	# multimeter from lab III course
 	lab3=dict(
+		desc='multimeter from lab III course',
 		type='digital',
 		volt=dict(
 			scales=[0.2, 2, 20, 200, 1000],
@@ -532,8 +533,8 @@ _util_mm_esr_data = dict(
 			digit=[3] * 5
 		)
 	),
-	# multimeter GBC Mod. KDM-700NCV
 	kdm700=dict(
+		desc='multimeter GBC Mod. KDM-700NCV',
 		type='digital',
 		volt=dict(
 			scales=[0.2, 2, 20, 200, 1000],
@@ -561,8 +562,8 @@ _util_mm_esr_data = dict(
 			digit=[3, 1, 1, 1, 1, 2, 10]
 		)
 	),
-	# multimeter ICE SuperTester 680R VII serie
 	ice680=dict(
+		desc='multimeter ICE SuperTester 680R VII serie',
 		type='analog',
 		volt=dict(
 			scales=[0.1, 2, 10, 50, 200, 500, 1000],
@@ -587,8 +588,8 @@ _util_mm_esr_data = dict(
 			cdt=[2, 1.5, 1.6, 1.6, 1.9]
 		)
 	),
-	# oscilloscope from lab III course
 	oscil=dict(
+		desc='oscilloscope from lab III course',
 		type='oscil',
 		volt=dict(
 			scales=[ (8*d*10**s) for s in range(-3, 1) for d in [1, 2, 5] ],
@@ -607,6 +608,12 @@ _util_mm_esr_data = dict(
 	)
 )
 
+def util_mm_list():
+	l = []
+	for meter in _util_mm_esr_data:
+		l += [(meter, _util_mm_esr_data[meter]['type'], _util_mm_esr_data[meter]['desc'])]
+	return l
+
 def util_mm_er(x, scale, metertype='lab3', unit='volt', sqerr=False):
 	"""
 	Returns the uncertainty of x and the internal resistance of the multimeter.
@@ -615,14 +622,14 @@ def util_mm_er(x, scale, metertype='lab3', unit='volt', sqerr=False):
 	----------
 	x : number
 		the value measured, may be negative
+	scale : number
+		the fullscale used to measure x
 	metertype : string
-		one of 'dm3900', 'kdm700', 'ice680', 'lab3', 'oscil'
+		one of the names returned by lab.util_mm_list()
 		the multimeter used
 	unit : string
 		one of 'volt', 'volt_ac', 'ampere' 'ampere_ac', 'ohm', 'farad'
 		the unit of measure of x
-	scale : number
-		the fullscale used to measure x
 	sqerr : bool
 		If True, sum errors squaring.
 	
@@ -632,6 +639,10 @@ def util_mm_er(x, scale, metertype='lab3', unit='volt', sqerr=False):
 		the uncertainty
 	r : number or None
 		the internal resistance (if applicable)
+	
+	See also
+	--------
+	util_mm_esr, util_mm_esr2, mme
 	"""
 	
 	x = abs(x)
@@ -661,8 +672,10 @@ def util_mm_er(x, scale, metertype='lab3', unit='volt', sqerr=False):
 		elif unit == 'ampere' or unit == 'ampere_ac':
 			r = info['cdt'][idx] / s
 	elif typ == 'oscil':
-		e = info['div'][idx]/25
+		e = info['div'][idx] / 25
 		r = 10e6
+	else:
+		raise KeyError(typ)
 		
 	return e, r
 
@@ -677,7 +690,7 @@ def util_mm_esr(x, metertype='lab3', unit='volt', sqerr=False):
 	x : number
 		the value measured, may be negative
 	metertype : string
-		one of 'dm3900', 'kdm700', 'ice680', 'lab3', 'oscil'
+		one of the names returned by util_mm_list()
 		the multimeter used
 	unit : string
 		one of 'volt', 'volt_ac', 'ampere' 'ampere_ac', 'ohm', 'farad'
@@ -693,11 +706,17 @@ def util_mm_esr(x, metertype='lab3', unit='volt', sqerr=False):
 		the full-scale
 	r : number or None
 		the internal resistance (if applicable)
+	
+	See also
+	--------
+	util_mm_er, util_mm_esr2, mme
 	"""
 	
 	x = abs(x)
 	info = _util_mm_esr_data[metertype][unit]
 	idx = _find_scale(x, info['scales'])
+	if idx < 0:
+		raise ValueError("value '%.4g %s' too big for all scales" % (x, unit))
 	s = info['scales'][idx]
 	e, r = util_mm_er(x, s, metertype=metertype, unit=unit, sqerr=sqerr)
 	return e, s, r
@@ -713,30 +732,22 @@ _util_mm_esr2_what = dict(
 
 def util_mm_esr2(x, metertype='lab3', unit='volt', what='error', sqerr=False):
 	"""
-	determines the fullscale used to measure x with a multimeter,
-	supposing the lowest possible fullscale was used, and returns the
-	uncertainty or the fullscale or the internal resistance.
+	Vectorized version of lab.util_mm_esr
 	
 	Parameters
 	----------
-	x : (X-shaped array of) number 
-		the value measured, may be negative
-	metertype : (X-shaped array of) string
-		one of 'dm3900', 'kdm700', 'ice680', 'lab3', 'oscil'
-		the multimeter used
-	unit : (X-shaped array of) string
-		one of 'volt', 'volt_ac', 'ampere' 'ampere_ac', 'ohm', 'farad'
-		the unit of measure of x
-	what : (X-shaped array of) string
+	what : string
 		one of 'error', 'scale', 'res'
 		what to return
-	sqerr : bool
-		If True, sum errors squaring.
 	
 	Returns
 	-------
-	z : (X-shaped array of) number
+	z : number
 		either the uncertainty, the fullscale or the internal resistance.
+	
+	See also
+	--------
+	util_mm_er, util_mm_esr, mme
 	"""
 	if unit == 'ohm' and what == 'res':
 		raise ValueError('asking internal resistance of ohmmeter')
@@ -746,8 +757,9 @@ def util_mm_esr2(x, metertype='lab3', unit='volt', what='error', sqerr=False):
 
 d = lambda x, n: int(("%.*e" % (n - 1, abs(x)))[0])
 ap = lambda x, n: float("%.*e" % (n - 1, x))
-nd = lambda x: math.floor(math.log10(x)) + 1
-def _format_epositive(x, e, esep=True, minexp=3):
+nd = lambda x: math.floor(math.log10(abs(x))) + 1
+def _format_epositive(x, e, errsep=True, minexp=3):
+	# DECIDE NUMBER OF DIGITS
 	if d(e, 2) < 3:
 		n = 2
 		e = ap(e, 2)
@@ -756,93 +768,80 @@ def _format_epositive(x, e, esep=True, minexp=3):
 		e = ap(e, 1)
 	else:
 		n = 1
-	if esep:
-		se = "%#.*g" % (n, e)
-		xse = ''
-	else:
-		xse = '(' + ("%#.*g" % (n, e * 10 ** (n - nd(e))))[:n] + ')'
-		se = ''
-	dn = int(nd(abs(x)) - nd(e)) if x != 0 else -n
+	# FORMAT MANTISSAS
+	dn = int(nd(x) - nd(e)) if x != 0 else -n
 	nx = n + dn
 	if nx > 0:
-		ex = nd(abs(x)) - 1
+		ex = nd(x) - 1
 		if nx > ex and abs(ex) <= minexp:
 			xd = nx - ex - 1
 			ex = 0
 		else:
 			xd = nx - 1
-		sx = "%.*f" % (xd, x / 10**ex) + xse
-		if ex != 0:
-			sx += "e%+d" % ex
+		sx = "%.*f" % (xd, x / 10**ex)
+		se = "%.*f" % (xd, e / 10**ex)
 	else:
 		le = nd(e)
-		sx = '0' + xse + ("e%+d" % (le - n) if le - n != 0 else '')
-	return sx, se
+		ex = le - n
+		sx = '0'
+		se = "%#.*g" % (n, e)
+	# RETURN
+	if errsep:
+		return sx, se, ex
+	return sx + '(' + ("%#.*g" % (n, e * 10 ** (n - nd(e))))[:n] + ')', '', ex
 
-def util_format_comp(x, e, compact=False):
+def util_format(x, e, pm=None, percent=False, comexp=True):
 	"""
 	format a value with its uncertainty
 	
 	Parameters
 	----------
-	x : number
+	x : number (or something understood by float(), ex. string representing number)
 		the value
-	e : number
-		the uncertainty
-	compact : bool
-		If True, write the uncertainty in parentheses next to the mantissa
-		of the value.
-	
-	Returns
-	-------
-	sx : string
-		the formatted value
-	se : string
-		the formatted uncertainty
-	
-	See also
-	--------
-	xe, xep, util_format_comp
-	"""
-	e = abs(e)
-	if not np.isfinite(x) or not np.isfinite(e) or e == 0:
-		return "%.3g" % x, "%.3g" % e
-	return _format_epositive(x, e, not compact)
-
-def util_format(x, e, pm=None, percent=False):
-	"""
-	format a value with its uncertainty
-	
-	Parameters
-	----------
-	x : number
-		the value
-	e : number
+	e : number (or as above)
 		the uncertainty
 	pm : string, optional
 		The "plusminus" symbol. If None, use compact notation.
-	percent : boolean, optional
+	percent : bool
 		if True, also format the relative error as percentage
+	comexp : bool
+		if True, write the exponent once.
 	
 	Returns
 	-------
 	s : string
 		the formatted value with uncertainty
 	
+	Examples
+	--------
+	util_format(123, 4) --> '123(4)'
+	util_format(10, .99) --> '10.0(10)'
+	util_format(1e8, 2.5e6) --> '1.000(25)e+8'
+	util_format(1e8, 2.5e6, pm='+-') --> '(1.000 +- 0.025)e+8'
+	util_format(1e8, 2.5e6, pm='+-', comexp=False) --> '1.000e+8 +- 0.025e+8'
+	util_format(1e8, 2.5e6, percent=True) --> '1.000(25)e+8 (2.5 %)'
+	util_format(nan, nan) = 'nan +- nan'
+	
 	See also
 	--------
-	xe, xep, util_format
+	xe, xep
 	"""
-	sx, se = util_format_comp(x, e, pm is None)
+	x = float(x)
+	e = abs(float(e))
+	if not math.isfinite(x) or not math.isfinite(e) or e == 0:
+		return "%.3g %s %.3g" % (x, '+-', e)
+	sx, se, ex = _format_epositive(x, e, not (pm is None))
+	es = "e%+d" % ex if ex != 0 else ''
 	if pm is None:
-		s = sx
+		s = sx + es
+	elif comexp and es != '':
+		s = '(' + sx + ' ' + pm + ' ' + se + ')' + es
 	else:
-		s = "%s %s %s" % (sx, pm, se)
-	if not percent or float(sx.split('(')[0]) == 0:
+		s = sx + es + ' ' + pm + ' ' + se + es
+	if (not percent) or sx == '0':
 		return s
-	else:
-		ep = abs(e) / x * 100.0
-		return s + " (%.*g %%)" % (2 if ep < 100.0 else 3, ep)
+	pe = e / x * 100.0
+	return s + " (%.*g %%)" % (2 if pe < 100.0 else 3, pe)
 
 # ************************** TIME *********************************
 
@@ -1029,7 +1028,7 @@ def mme(x, unit, metertype='lab3', sqerr=False):
 		one of 'volt', 'volt_ac', 'ampere' 'ampere_ac', 'ohm', 'farad'
 		the unit of measure of x
 	metertype : (X-shaped array of) string
-		one of 'dm3900', 'kdm700', 'ice680', 'lab3', 'oscil'
+		one of the names returned by util_mm_list()
 		the multimeter used
 	sqerr : bool
 		If True, sum errors squaring.
@@ -1038,6 +1037,10 @@ def mme(x, unit, metertype='lab3', sqerr=False):
 	-------
 	e : (X-shaped array of) number
 		the uncertainty
+	
+	See also
+	--------
+	util_mm_er, util_mm_esr, util_mm_esr2
 	"""
 	return util_mm_esr2(x, metertype=metertype, unit=unit, what='error', sqerr=sqerr)
 
@@ -1045,50 +1048,34 @@ _util_format_vect = np.vectorize(util_format, otypes=[str])
 
 unicode_pm = u'±'
 
-def xe(x, e, pm=None):
+def xe(x, e, pm=None, comexp=True):
 	"""
-	format a value with its uncertainty
+	Vectorized version of util_format with percent=False,
+	see lab.util_format and numpy.vectorize.
 	
-	Parameters
-	----------
-	x : (X-shaped array of) number
-		the value
-	e : (X-shaped array of) number
-		the uncertainty
-	pm : string, optional
-		the "plusminus" symbol; if None use compact notation.
-	
-	Returns
+	Example
 	-------
-	s : (X-shaped array of) string
-		the formatted value with uncertainty
+	xe(['1e7', 2e7], 33e4) --> ['1.00(3)e+7', '2.00(3)e+7']
+	xe(10, 0.8, pm=unicode_pm) --> '10.0 ± 0.8'
 	
 	See also
 	--------
-	xep, num2si, util_format, util_format_comp
+	xep, num2si, util_format
 	"""
-	return _util_format_vect(x, e, pm, False)
+	return _util_format_vect(x, e, pm, False, comexp)
 
-def xep(x, e, pm=None):
+def xep(x, e, pm=None, comexp=True):
 	"""
-	format a value with its absolute and relative uncertainty
+	Vectorized version of util_format with percent=True,
+	see lab.util_format and numpy.vectorize.
 	
-	Parameters
-	----------
-	x : (X-shaped array of) number
-		the value
-	e : (X-shaped array of) number
-		the uncertainty
-	pm : string, optional
-		the "plusminus" symbol; if None use compact notation.
-	
-	Returns
+	Example
 	-------
-	s : (X-shaped array of) string
-		the formatted value with uncertainty
+	xep(['1e7', 2e7], 33e4) --> ['1.00(3)e+7 (3.3 %)', '2.00(3)e+7 (1.7 %)']
+	xep(10, 0.8, pm=unicode_pm) --> '10.0 ± 0.8 (8 %)'
 	
 	See also
 	--------
-	xe, num2si, util_format, util_format_comp
+	xe, num2si, util_format
 	"""
-	return _util_format_vect(x, e, pm, True)
+	return _util_format_vect(x, e, pm, True, comexp)
