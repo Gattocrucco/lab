@@ -25,7 +25,7 @@ __all__ = [ # things imported when you do "from lab import *"
 	'util_format'
 ]
 
-__version__ = '2016.11.14'
+__version__ = '2016.11'
 
 # ************************** FIT ***************************
 
