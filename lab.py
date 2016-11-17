@@ -7,6 +7,37 @@ import time
 from scipy import odr
 from scipy.optimize import curve_fit
 
+# TODO
+#
+# num2si
+# opzione unicode=True per usare mu
+#
+# util_format
+# opzione si=True per formattare come num2si
+#
+# fit_generic_xyerr3 (nuova funzione)
+# clone di curve_fit che però minimizza con la “varianza effettiva”
+#
+# fit_linear:
+# è giusto usare il chiquadro effettivo per absolute_sigma? urge analisi teorica o monte carlo
+#
+# fit_generic (nuova funzione)
+# mangia anche le funzioni sympy calcolandone jacb e jacd, riconoscendo se può fare un fit analitico
+# controlla gli argomenti in ingresso prima per dare errori sensati
+# usa scipy.odr (anche fit implicito, covarianze, multidim, restart, fissaggio parametri)
+# le cose multidim sono trasposte nel modo comodo per scrivere le funz. (quindi mi sa come scipy.odr), può trasporre lei con un'opzione
+# riconosce se la f mangia un punto alla volta o tutti i dati insieme
+# interfaccia tipo curve_fit (fare in modo che i casi base siano uguali a fit_linear e fit_generic_xyerr)
+# ha un full_output e un print_info che fanno molte cose
+# fit_generic(f, x, y=None, dx=None, dy=None, p0=None, pfix=None, dfdx=None, dfdp=None, dimorder='compfirst', absolute_sigma=True, full_output=False, print_info=False, restart=False)
+# = par, cov,
+# {'resx': residui x,
+# 'resy': residui y,
+# 'restart': oggetto ODR}
+# se restart=True, ritorna l'oggetto ODR; se restart è un ODR, lo usa per ripartire da lì.
+# pfix = [True, False ...] i True vengono bloccati
+# pfix = [0, 3, 5...] i parametri a questi indici vengono bloccati
+
 __all__ = [ # things imported when you do "from lab import *"
 	'curve_fit_patched',
 	'fit_norm_cov',
