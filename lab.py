@@ -14,11 +14,13 @@ from scipy.optimize import curve_fit
 #
 # util_format
 # opzione si=True per formattare come num2si
+# opzione errdig=(intero) per scegliere le cifre dell'errore
 #
 # fit_generic_xyerr3 (nuova funzione)
 # clone di curve_fit che però minimizza con la “varianza effettiva”
+# si spera che dia esattamente la stessa stima di fit_generic_xyerr, però mi aspetto con la varianza diversa. E a quel punto quale dei due è quello più “giusto”?
 #
-# fit_linear:
+# fit_linear
 # è giusto usare il chiquadro effettivo per absolute_sigma? urge analisi teorica o monte carlo
 #
 # fit_generic (nuova funzione)
@@ -294,7 +296,7 @@ def _fit_linear_unif_err(x, y):
 	vab = 0
 	return np.array([a, b]), np.array([[vaa, vab], [vab, vbb]])
 
-def fit_linear(x, y, dx=None, dy=None, offset=True, absolute_sigma=True, conv_diff=0.001, max_cycles=5, print_info=False):
+def fit_linear(x, y, dx=None, dy=None, offset=True, absolute_sigma=True, conv_diff=1e-8, max_cycles=5, print_info=False):
 	"""
 	Fit y = m * x + q
 	
@@ -351,39 +353,68 @@ def fit_linear(x, y, dx=None, dy=None, offset=True, absolute_sigma=True, conv_di
 	if offset:
 		fun_fit = _fit_affine_yerr
 		fun_fit_dynone = _fit_affine_unif_err
+		ddof = 2
 	else:
 		fun_fit = _fit_linear_yerr
 		fun_fit_dynone = _fit_linear_unif_err
-	if not (dy is None):
+		ddof = 1
+	if (dy is None) and (dx is None):
+		par, cov = fun_fit_dynone(x, y)
+		chisq_rid = ((y - par[0]*x - par[1])**2).sum() / (len(x) - ddof)
+		cov *= chisq_rid
+		return par, cov
+	elif (not dy is None) and (dx is None):
 		dy = np.asarray(dy)
+		if (dy == 0).any():
+			raise ValueError('Fit with fixed points not supported')
 		par, cov = fun_fit(x, y, dy)
 		if not absolute_sigma:
-			chisq_rid = (((y - par[0]*x - par[1]) / dy)**2).sum() / (len(x) - 2)
+			chisq_rid = (((y - par[0]*x - par[1]) / dy)**2).sum() / (len(x) - ddof)
 			cov *= chisq_rid
-	else:
-		par, cov = fun_fit_dynone(x, y)
-		chisq_rid = ((y - par[0]*x - par[1])**2).sum() / (len(x) - 2)
-		cov *= chisq_rid
-		dy = 0
-	if dx is None:
 		return par, cov
-	dx = np.asarray(dx)
+	elif (dy is None) and (not dx is None):
+		dx = np.asarray(dx)
+		if (dx == 0).any():
+			raise ValueError('Fit with fixed points not supported')
+		par, cov = fun_fit_dynone(x, y)
+		if not absolute_sigma:
+			chisq_rid = (((y - par[0]*x - par[1]))**2).sum() / (len(x) - ddof)
+			cov *= chisq_rid
+		dy = 0
+	else:
+		dx = np.asarray(dx)
+		dy = np.asarray(dy)
+		dy0 = dy == 0
+		if np.logical_and(dx == 0, dy0).any():
+			raise ValueError('Fit with fixed points not supported')
+		ndy0 = np.logical_not(dy0)
+		if ndy0.sum() > ddof:
+			par, cov = fun_fit(x[ndy0], y[ndy0], dy[ndy0])
+			if not absolute_sigma:
+				chisq_rid = (((y - par[0]*x - par[1]) / dy)**2).sum() / (len(x) - ddof)
+				cov *= chisq_rid
+		else:
+			par, cov = fun_fit_dynone(x, y)
+			chisq_rid = (((y - par[0]*x - par[1]))**2).sum() / (len(x) - ddof)
+			cov *= chisq_rid
 	cycles = 1
 	while True:
 		if cycles >= max_cycles:
 			raise RuntimeError("Maximum number of fit cycles %d reached" % max_cycles)
 		dyeff = np.sqrt(dy**2 + (par[0] * dx)**2)
-		npar, cov = fun_fit(x, y, dyeff)
-		error = abs(npar - par)
-		par = npar
+		npar, ncov = fun_fit(x, y, dyeff)
 		if not absolute_sigma:
-			chisq_rid = (((y - par[0]*x - par[1]) / dyeff)**2).sum() / (len(x) - 2)
-			cov *= chisq_rid
+			chisq_rid = (((y - npar[0]*x - npar[1]) / dyeff)**2).sum() / (len(x) - ddof)
+			ncov *= chisq_rid
+		error = abs(npar - par) / npar
+		cerror = abs(ncov - cov) / ncov
+		par = npar
+		cov = ncov
 		cycles += 1
-		if all(error <= np.sqrt(np.diag(cov)) * conv_diff):
+		if (error < conv_diff).all() and (cerror < conv_diff).all():
 			break
 	if print_info:
-		print(fit_linear, ": cycles: %d" % (cycles))
+		print("fit_linear: cycles: %d" % (cycles))
 	return par, cov
 
 def fit_affine_noerr(x, y):
