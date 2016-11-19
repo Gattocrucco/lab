@@ -84,7 +84,7 @@ def fit_norm_cov(cov):
 			the normalized matrix
 	"""
 	sigma = np.sqrt(np.diag(ncov))
-	ncov = np.copy(cov) / (np.outer(sigma, sigma)
+	ncov = cov / np.outer(sigma, sigma)
 	return ncov
 
 def fit_generic_xyerr(f, dfdx, x, y, sigmax, sigmay, p0=None, print_info=False, absolute_sigma=True, conv_diff=0.001, max_cycles=5, **kw):
