@@ -5,7 +5,7 @@ import inspect
 import numpy as np
 import time
 from scipy import odr
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, leastsq
 
 # TODO
 #
@@ -15,10 +15,6 @@ from scipy.optimize import curve_fit
 # util_format
 # opzione si=True per formattare come num2si
 # opzione errdig=(intero) per scegliere le cifre dell'errore
-#
-# fit_generic_xyerr3 (nuova funzione)
-# clone di curve_fit che però minimizza con la “varianza effettiva”
-# si spera che dia esattamente la stessa stima di fit_generic_xyerr, però mi aspetto con la varianza diversa. E a quel punto quale dei due è quello più “giusto”?
 #
 # fit_linear
 # è giusto usare il chiquadro effettivo per absolute_sigma? urge analisi teorica o monte carlo
@@ -45,6 +41,7 @@ __all__ = [ # things imported when you do "from lab import *"
 	'fit_norm_cov',
 	'fit_generic_xyerr',
 	'fit_generic_xyerr2',
+	'fit_generic_xyerr3',
 	'fit_linear',
 	'fit_const_yerr',
 	'util_mm_er',
@@ -244,6 +241,22 @@ def fit_generic_xyerr2(f, x, y, sigmax, sigmay, p0=None, print_info=False, absol
 	if (not absolute_sigma) and len(y) > len(p0):
 		s_sq = sum(((np.asarray(y) - f(x, *par)) / (np.asarray(sigmay))) ** 2) / (len(y) - len(p0))
 		cov *= s_sq
+	return par, cov
+
+def fit_generic_xyerr3(f, dfdx, dfdp, dfdpdx, x, y, dx, dy, p0):
+	def residual(p):
+		return (y - f(x, *p)) / np.sqrt(dy**2 + (dfdx(x, *p)*dx)**2)
+	def jac(p):
+		rt = np.empty((len(p), len(x)))
+		rad = dy**2 + (dfdx(x, *p) * dx)**2
+		srad = np.sqrt(rad)
+		res = (y-f(x,*p)) * dx**2 * dfdx(x,*p) / srad
+		sdfdp = dfdp(x, *p)
+		sdfdpdx = dfdpdx(x, *p)
+		for i in range(len(p)):
+			rt[i] = - (sdfdp[i] * srad + sdfdpdx[i] * res) / rad
+		return rt
+	par, cov, _, _, _ = leastsq(residual, p0, Dfun=jac, col_deriv=True, full_output=True)
 	return par, cov
 
 def _fit_affine_yerr(x, y, sigmay):
