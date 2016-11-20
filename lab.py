@@ -42,6 +42,7 @@ __all__ = [ # things imported when you do "from lab import *"
 	'fit_generic_xyerr',
 	'fit_generic_xyerr2',
 	'fit_generic_xyerr3',
+	'fit_generic_xyerr4',
 	'fit_linear',
 	'fit_const_yerr',
 	'util_mm_er',
@@ -195,7 +196,7 @@ def fit_generic_xyerr(f, dfdx, x, y, sigmax, sigmay, p0=None, print_info=False, 
 		print(fit_generic_xyerr, ": cycles: %d" % (cycles))
 	return rt
 
-def fit_generic_xyerr2(f, x, y, sigmax, sigmay, p0=None, print_info=False, absolute_sigma=True):
+def fit_generic_xyerr2(f, dfdx, dfdp, x, y, sigmax, sigmay, p0=None, print_info=False):
 	"""
 		fit y = f(x, *params)
 		
@@ -229,18 +230,20 @@ def fit_generic_xyerr2(f, x, y, sigmax, sigmay, p0=None, print_info=False, absol
 		-----
 		This is a wrapper of scipy.odr
 	"""
-	f_wrap = lambda params, x: f(x, *params)
-	model = odr.Model(f_wrap)
+	def fcn(B, x):
+		return f(x, *B)
+	def fjacb(B, x):
+		return dfdp(x, *B)
+	def fjacd(B, x):
+		return dfdx(x, *B)
+	model = odr.Model(fcn, fjacb=fjacb, fjacd=fjacd)
 	data = odr.RealData(x, y, sx=sigmax, sy=sigmay)
-	odr = odr.ODR(data, model, beta0=p0)
-	output = odr.run()
+	ODR = odr.ODR(data, model, beta0=p0)
+	output = ODR.run()
 	par = output.beta
 	cov = output.cov_beta
 	if print_info:
 		output.pprint()
-	if (not absolute_sigma) and len(y) > len(p0):
-		s_sq = sum(((np.asarray(y) - f(x, *par)) / (np.asarray(sigmay))) ** 2) / (len(y) - len(p0))
-		cov *= s_sq
 	return par, cov
 
 def fit_generic_xyerr3(f, dfdx, dfdp, dfdpdx, x, y, dx, dy, p0):
@@ -265,10 +268,18 @@ def invs(a):
 	ia = np.linalg.inv(a)
 	return (ia + ia.T) / 2	
 
-def fit_generic_xyerr4(f, finv, x, y, dx, dy, p0):
+def fit_generic_xyerr4(f, finv, dfdp, dfinvdp, x, y, dx, dy, p0):
 	# idea di Hoch
-	par1, cov1 = curve_fit(f, x, y, sigma=dy, p0=p0, absolute_sigma=True)
-	par2, cov2 = curve_fit(finv, y, x, sigma=dx, p0=p0, absolute_sigma=True)
+	def Dfun(p):
+		return -dfdp(x, *p) / dy[np.newaxis, :]
+	def residual(p):
+		return (y - f(x, *p)) / dy
+	def Dfun_inv(p):
+		return -dfinvdp(y, *p) / dx[np.newaxis, :]
+	def residual_inv(p):
+		return (x - finv(y, *p)) / dx
+	par1, cov1, _, _, _ = leastsq(residual, p0, Dfun=Dfun, col_deriv=True, full_output=True)
+	par2, cov2, _, _, _ = leastsq(residual_inv, par1, Dfun=Dfun_inv, col_deriv=True, full_output=True)
 	icov1 = invs(cov1)
 	icov2 = invs(cov2)
 	cov = invs(icov1 + icov2)
@@ -1005,9 +1016,10 @@ def etastart():
 	--------
 	etastr
 	"""
-	return time.time()
+	now = time.time()
+	return [now, now]
 
-def etastr(eta, progress):
+def etastr(eta, progress, mininterval=np.inf):
 	"""
 	Compute the eta given a startpoint returned from etastart() and the progress.
 	
@@ -1037,7 +1049,8 @@ def etastr(eta, progress):
 	--------
 	etastart
 	"""
-	interval = time.time() - eta
+	now = time.time()
+	interval = now - eta[0]
 	if 0 < progress <= 1:
 		etastr = util_timestr((1 - progress) * interval / progress)
 	elif progress == 0:
@@ -1045,6 +1058,9 @@ def etastr(eta, progress):
 	else:
 		raise RuntimeError("progress %.2f out of bounds [0,1]" % progress)
 	timestr = util_timestr(interval)
+	if now - eta[1] >= mininterval:
+		print('elapsed time: %s, remaining time: %s' % (timestr, etastr))
+		eta[1] = now
 	return timestr, etastr
 
 # this function taken from stackoverflow and modified
