@@ -259,6 +259,22 @@ def fit_generic_xyerr3(f, dfdx, dfdp, dfdpdx, x, y, dx, dy, p0):
 	par, cov, _, _, _ = leastsq(residual, p0, Dfun=jac, col_deriv=True, full_output=True)
 	return par, cov
 
+def invs(a):
+	# invert a symmetric matrix
+	# there must be an algorithm better than this!
+	ia = np.linalg.inv(a)
+	return (ia + ia.T) / 2	
+
+def fit_generic_xyerr4(f, finv, x, y, dx, dy, p0):
+	# idea di Hoch
+	par1, cov1 = curve_fit(f, x, y, sigma=dy, p0=p0, absolute_sigma=True)
+	par2, cov2 = curve_fit(finv, y, x, sigma=dx, p0=p0, absolute_sigma=True)
+	icov1 = invs(cov1)
+	icov2 = invs(cov2)
+	cov = invs(icov1 + icov2)
+	par = cov.dot(icov1.dot(par1) + icov2.dot(par2))
+	return par, cov
+
 def _fit_affine_yerr(x, y, sigmay):
 	dy2 = sigmay ** 2
 	sy = (y / dy2).sum()

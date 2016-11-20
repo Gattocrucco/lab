@@ -1,14 +1,15 @@
 import lab
 import scipy.stats as st
 from pylab import *
+from scipy.optimize import curve_fit
 
 #### PARAMETERS ####
 showplot = True
 m = 1 # slope
 q = 1 # offset
-n = 1000 # number of points
+n = 10000 # number of points
 mcn = 1000 # monte carlo runs
-fitfun = lab.fit_linear
+fitfun = lab.fit_generic_xyerr3
 xmean = linspace(0, 1, n)
 dx = array([.1] * n)
 dy = array([.1] * n)
@@ -27,6 +28,7 @@ linfun = lambda x, m, q: m * x + q
 dxlinfun = lambda x, m, q: m
 dplinfun = lambda x, m, q: array([x, ones(len(x))])
 dpxlinfun = lambda x, m, q: array([ones(len(x)), zeros(len(x))])
+ilinfun = lambda y, m, q: y/m - q/m
 for i in range(mcn):
 	# generate data
 	deltax = st.norm.rvs(size=n)
@@ -38,6 +40,8 @@ for i in range(mcn):
 		par, cov = fitfun(linfun, dxlinfun, dplinfun, dpxlinfun, x, y, dx, dy, (1, 1))
 	elif fitfun == lab.fit_linear:
 		par, cov = fitfun(x, y, dx, dy)
+	elif fitfun == lab.fit_generic_xyerr4:
+		par, cov = fitfun(linfun, ilinfun, x, y, dx, dy, (1, 1))
 	# save results
 	M, Q = par
 	chisq[i] = ((y - (M * x + Q))**2 / (dy**2 + (M*dx)**2)).sum()
