@@ -199,8 +199,8 @@ def fit_generic_xyerr2(f, x, y, sigmax, sigmay, p0=None, print_info=False, absol
 	f_wrap = lambda params, x: f(x, *params)
 	model = odr.Model(f_wrap)
 	data = odr.RealData(x, y, sx=sigmax, sy=sigmay)
-	odr = odr.ODR(data, model, beta0=p0)
-	output = odr.run()
+	ODR = odr.ODR(data, model, beta0=p0)
+	output = ODR.run()
 	par = output.beta
 	cov = output.cov_beta
 	if print_info:
