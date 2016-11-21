@@ -249,11 +249,13 @@ def fit_generic_xyerr2(f, dfdx, dfdp, x, y, sigmax, sigmay, p0=None, print_info=
 def fit_generic_xyerr3(f, dfdx, dfdp, dfdpdx, x, y, dx, dy, p0):
 	def residual(p):
 		return (y - f(x, *p)) / np.sqrt(dy**2 + (dfdx(x, *p)*dx)**2)
+	rt = np.empty((len(p0), len(x)))
+	dy2 = dy**2
+	dx2 = dx**2
 	def jac(p):
-		rt = np.empty((len(p), len(x)))
-		rad = dy**2 + (dfdx(x, *p) * dx)**2
+		rad = dy2 + dfdx(x, *p)**2 * dx2
 		srad = np.sqrt(rad)
-		res = (y-f(x,*p)) * dx**2 * dfdx(x,*p) / srad
+		res = (y - f(x, *p)) * dx2 * dfdx(x, *p) / srad
 		sdfdp = dfdp(x, *p)
 		sdfdpdx = dfdpdx(x, *p)
 		for i in range(len(p)):
@@ -285,7 +287,7 @@ def fit_generic_xyerr4(f, finv, dfdp, dfinvdp, x, y, dx, dy, p0):
 	cov = invs(icov1 + icov2)
 	par = cov.dot(icov1.dot(par1) + icov2.dot(par2))
 	return par, cov
-
+	
 def _fit_affine_yerr(x, y, sigmay):
 	dy2 = sigmay ** 2
 	sy = (y / dy2).sum()
@@ -300,6 +302,19 @@ def _fit_affine_yerr(x, y, sigmay):
 	vbb = sx2 / denom
 	vab = -sx / denom
 	return np.array([a, b]), np.array([[vaa, vab], [vab, vbb]])
+
+def fit_linear_hoch(x, y, dx, dy):
+	par1, cov1 = _fit_affine_yerr(x, y, dy)
+	par3, cov3 = _fit_affine_yerr(y, x, dx)
+	m, q = par3
+	par2 = np.array([1/m, -q/m])
+	J = np.array([[-1/m**2, 0], [q/m**2, -1/m]])
+	cov2 = J.dot(cov3).dot(J.T)
+	icov1 = invs(cov1)
+	icov2 = invs(cov2)
+	cov = invs(icov1 + icov2)
+	par = cov.dot(icov1.dot(par1) + icov2.dot(par2))
+	return par, cov
 
 def _fit_affine_unif_err(x, y):
 	sy = y.sum()
@@ -336,7 +351,7 @@ def _fit_linear_unif_err(x, y):
 	vab = 0
 	return np.array([a, b]), np.array([[vaa, vab], [vab, vbb]])
 
-def fit_linear(x, y, dx=None, dy=None, offset=True, absolute_sigma=True, conv_diff=1e-8, max_cycles=5, print_info=False):
+def fit_linear(x, y, dx=None, dy=None, offset=True, absolute_sigma=True, conv_diff=1e-7, max_cycles=5, print_info=False):
 	"""
 	Fit y = m * x + q
 	
