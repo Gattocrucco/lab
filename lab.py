@@ -247,11 +247,11 @@ def fit_generic_xyerr2(f, dfdx, dfdp, x, y, sigmax, sigmay, p0=None, print_info=
 	return par, cov
 
 def fit_generic_xyerr3(f, dfdx, dfdp, dfdpdx, x, y, dx, dy, p0):
-	def residual(p):
-		return (y - f(x, *p)) / np.sqrt(dy**2 + (dfdx(x, *p)*dx)**2)
-	rt = np.empty((len(p0), len(x)))
 	dy2 = dy**2
 	dx2 = dx**2
+	def residual(p):
+		return (y - f(x, *p)) / np.sqrt(dy2 + dfdx(x, *p)**2 * dx2)
+	rt = np.empty((len(p0), len(x)))
 	def jac(p):
 		rad = dy2 + dfdx(x, *p)**2 * dx2
 		srad = np.sqrt(rad)
@@ -261,6 +261,23 @@ def fit_generic_xyerr3(f, dfdx, dfdp, dfdpdx, x, y, dx, dy, p0):
 		for i in range(len(p)):
 			rt[i] = - (sdfdp[i] * srad + sdfdpdx[i] * res) / rad
 		return rt
+	par, cov, _, _, _ = leastsq(residual, p0, Dfun=jac, col_deriv=True, full_output=True)
+	return par, cov
+
+def _fit_affine_odr(x, y, dx, dy):
+	dy2 = dy**2
+	dx2 = dx**2
+	def residual(p):
+		return (y - (p[0]*x + p[1])) / np.sqrt(dy2 + (p[0]*dx)**2)
+	rt = np.empty((2, len(x)))
+	def jac(p):
+		rad = dy2 + p[0]**2 * dx2
+		srad = np.sqrt(rad)
+		res = (y - (p[0]*x + p[1])) * dx2 * p[0] / srad
+		rt[0] = - (x * srad + res) / rad
+		rt[1] = - 1 / srad
+		return rt
+	p0, _ = _fit_affine_yerr(x, y, dy)
 	par, cov, _, _, _ = leastsq(residual, p0, Dfun=jac, col_deriv=True, full_output=True)
 	return par, cov
 

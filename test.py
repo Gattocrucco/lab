@@ -7,18 +7,21 @@ import sympy as sp
 from mpl_toolkits.mplot3d import Axes3D
 
 #### PARAMETERS ####
-showplot = False
+showplot = True
 showmqplot = False
+showmqdxdyplot = False
 # ms = linspace(-2,2,40) # slope
 # qs = linspace(-2,2,40) # offset
 ms = array([1])
 qs = array([1])
-n = 50 # number of points
-mcns = linspace(sqrt(100), sqrt(1000), 40)**2 # monte carlo runs
-fitfun = lab.fit_linear
+n = 1000 # number of points
+# mcns = linspace(sqrt(100), sqrt(1000), 40)**2 # monte carlo runs
+mcns = [1000]
+fitfun = lab._fit_affine_odr
 xmean = linspace(0, 1, n)
 dys = outer([1], st.norm.rvs(size=n)*.0002+.001)
-dxs = outer(linspace(1, 10, 40), linspace(1,100,n)*.001)
+dxs = outer([1], linspace(1,1000,n)*.001)
+# dxs = outer(linspace(1, 10, len(mcns)), linspace(1,100,n)*.001)
 # dx = st.norm.rvs(size=n)*.02+.1
 # dy = st.norm.rvs(size=n)*.02+.1
 # dy = 0
@@ -81,6 +84,8 @@ for ll in range(len(dys)):
 						par, cov = fitfun(linfun, dxlinfun, dplinfun, x, y, dx, dy, (m, q))
 					elif fitfun == lab.fit_linear_hoch:
 						par, cov = fitfun(x, y, dx, dy)
+					elif fitfun == lab._fit_affine_odr:
+						par, cov = fitfun(x, y, dx, dy)
 					end = time.time()
 					# save results
 					if showplot:
@@ -94,14 +99,14 @@ for ll in range(len(dys)):
 				dp[j, k, l, ll] = pars.std(ddof=1, axis=0) / sqrt(mcn)
 		
 				if showplot:
-					figure('Fit with m=%g, q=%g, fun=%s' % (m, q, fitfun.__name__))
+					figure('Fit with m=%g, q=%g, fun=%s' % (m, q, fitfun.__name__)).set_tight_layout(True)
 					clf()
 					subplot(421)
-					title('$m$')
-					hist(pars[:, 0], bins=int(sqrt(mcn)))
+					title('$m\'-m$')
+					hist(pars[:, 0]-m, bins=int(sqrt(mcn)))
 					subplot(423)
-					title('$q$')
-					hist(pars[:, 1], bins=int(sqrt(mcn)))
+					title('$q\'-q$')
+					hist(pars[:, 1]-q, bins=int(sqrt(mcn)))
 					subplot(422)
 					title('$\Delta m$')
 					hist(sqrt(covs[:, 0, 0]), bins=int(sqrt(mcn)))
@@ -109,8 +114,8 @@ for ll in range(len(dys)):
 					title('$\Delta q$')
 					hist(sqrt(covs[:, 1, 1]), bins=int(sqrt(mcn)))
 					subplot(425)
-					title('$m,q$')
-					plot(pars[:, 0], pars[:, 1], '.k', markersize=2)
+					title('$(m\',q\')-(m,q)$')
+					plot(pars[:, 0]-m, pars[:, 1]-q, '.k', markersize=2)
 					grid()
 					subplot(426)
 					title('$\\rho mq$')
@@ -121,7 +126,6 @@ for ll in range(len(dys)):
 					subplot(428)
 					title('time [ms]')
 					hist(times*1000, bins=int(sqrt(mcn)))
-					tight_layout()
 					show()
 
 if showmqplot:
@@ -168,32 +172,33 @@ if showmqplot:
 	ylabel('True q')
 	gca().set_zlabel('Fitted q')
 	show()
-	
-figure('Slope vs dx, %s' % fitfun.__name__).set_tight_layout(True)
-clf()
-subplot(211)
-title('True m = %g, q = %g, sum(dy^2) = %g' % (ms[0], qs[0], (dys[0]**2).sum()))
-xlabel('sum of dx**2')
-ylabel('Fitted m')
-errorbar((dxs**2).sum(axis=-1), fp[0,0,:,0,0], dp[0,0,:,0,0], fmt=',')
-subplot(212)
-title('True m = %g, q = %g, sum(dx^2) = %g' % (ms[0], qs[0], (dxs[0]**2).sum()))
-xlabel('sum of dy**2')
-ylabel('Fitted m')
-errorbar((dys**2).sum(axis=-1), fp[0,0,0,:,0], dp[0,0,0,:,0], fmt=',')
+
+if showmqdxdyplot:	
+	figure('Slope vs dx, %s' % fitfun.__name__).set_tight_layout(True)
+	clf()
+	subplot(211)
+	title('True m = %g, q = %g, sum(dy^2) = %g' % (ms[0], qs[0], (dys[0]**2).sum()))
+	xlabel('sum of dx**2')
+	ylabel('Fitted m')
+	errorbar((dxs**2).sum(axis=-1), fp[0,0,:,0,0], dp[0,0,:,0,0], fmt=',')
+	subplot(212)
+	title('True m = %g, q = %g, sum(dx^2) = %g' % (ms[0], qs[0], (dxs[0]**2).sum()))
+	xlabel('sum of dy**2')
+	ylabel('Fitted m')
+	errorbar((dys**2).sum(axis=-1), fp[0,0,0,:,0], dp[0,0,0,:,0], fmt=',')
 
 
-figure('Offset vs dx, %s' % fitfun.__name__).set_tight_layout(True)
-clf()
-subplot(211)
-title('True m = %g, q = %g, sum(dy^2) = %g' % (ms[0], qs[0], (dys[0]**2).sum()))
-xlabel('sum of dx**2')
-ylabel('Fitted q')
-errorbar((dxs**2).sum(axis=-1), fp[0,0,:,0,1], dp[0,0,:,0,1], fmt=',')
-subplot(212)
-title('True m = %g, q = %g, sum(dx^2) = %g' % (ms[0], qs[0], (dxs[0]**2).sum()))
-xlabel('sum of dy**2')
-ylabel('Fitted q')
-errorbar((dys**2).sum(axis=-1), fp[0,0,0,:,1], dp[0,0,0,:,1], fmt=',')
+	figure('Offset vs dx, %s' % fitfun.__name__).set_tight_layout(True)
+	clf()
+	subplot(211)
+	title('True m = %g, q = %g, sum(dy^2) = %g' % (ms[0], qs[0], (dys[0]**2).sum()))
+	xlabel('sum of dx**2')
+	ylabel('Fitted q')
+	errorbar((dxs**2).sum(axis=-1), fp[0,0,:,0,1], dp[0,0,:,0,1], fmt=',')
+	subplot(212)
+	title('True m = %g, q = %g, sum(dx^2) = %g' % (ms[0], qs[0], (dxs[0]**2).sum()))
+	xlabel('sum of dy**2')
+	ylabel('Fitted q')
+	errorbar((dys**2).sum(axis=-1), fp[0,0,0,:,1], dp[0,0,0,:,1], fmt=',')
 
-show()
+	show()
