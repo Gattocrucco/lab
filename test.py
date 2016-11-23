@@ -5,22 +5,24 @@ from scipy.optimize import curve_fit
 import time
 import sympy as sp
 from mpl_toolkits.mplot3d import Axes3D
+from strangefit import *
 
 #### PARAMETERS ####
-showplot = True
-showmqplot = False
-showmqdxdyplot = False
+showplot = True # show plot after monte carlo run with fixed data parameters
+showmqplot = False # show parameter biases with fixed data
+showmqdxdyplot = False # show parameter vs. errors
+stattest = True # perform statistical test after monte carlo
 # ms = linspace(-2,2,40) # slope
 # qs = linspace(-2,2,40) # offset
 ms = array([1])
 qs = array([1])
-n = 1000 # number of points
+n = 10 # number of points
 # mcns = linspace(sqrt(100), sqrt(1000), 40)**2 # monte carlo runs
-mcns = [1000]
+mcns = [10000]
 fitfun = lab._fit_affine_odr
 xmean = linspace(0, 1, n)
 dys = outer([1], st.norm.rvs(size=n)*.0002+.001)
-dxs = outer([1], linspace(1,1000,n)*.001)
+dxs = outer([1], st.norm.rvs(size=n)*.0002+.001)
 # dxs = outer(linspace(1, 10, len(mcns)), linspace(1,100,n)*.001)
 # dx = st.norm.rvs(size=n)*.02+.1
 # dy = st.norm.rvs(size=n)*.02+.1
@@ -49,6 +51,7 @@ def dpilinfun(y, m, q):
 # 	return rt
 eta = lab.etastart()
 fp, dp = empty((2, len(ms), len(qs), len(dxs), len(dys), 2))
+cp = empty((len(ms), len(qs), len(dxs), len(dys)))
 for ll in range(len(dys)):
 	dy = dys[ll]
 	for l in range(len(dxs)):
@@ -78,26 +81,52 @@ for ll in range(len(dys)):
 						par, cov = fitfun(linfun, dxlinfun, dplinfun, dpxlinfun, x, y, dx, dy, (m, q))
 					elif fitfun == lab.fit_linear:
 						par, cov = fitfun(x, y, dx, dy, conv_diff=1e-6, max_cycles=10)
-					elif fitfun == lab.fit_generic_xyerr4:
+					elif fitfun == fit_generic_xyerr4:
 						par, cov = fitfun(linfun, ilinfun, dplinfun, dpilinfun, x, y, dx, dy, (m, q))
 					elif fitfun == lab.fit_generic_xyerr2:
 						par, cov = fitfun(linfun, dxlinfun, dplinfun, x, y, dx, dy, (m, q))
-					elif fitfun == lab.fit_linear_hoch:
+					elif fitfun == fit_linear_hoch:
 						par, cov = fitfun(x, y, dx, dy)
 					elif fitfun == lab._fit_affine_odr:
 						par, cov = fitfun(x, y, dx, dy)
 					end = time.time()
 					# save results
-					if showplot:
+					if showplot or stattest:
 						times[i] = end - start
 						M, Q = par
 						chisq[i] = ((y - (M * x + Q))**2 / (dy**2 + (M*dx)**2)).sum()
 					pars[i] = par
 					covs[i] = cov
-	
-				fp[j, k, l, ll] = pars.mean(axis=0)
-				dp[j, k, l, ll] = pars.std(ddof=1, axis=0) / sqrt(mcn)
+				
+				if stattest:
+					pm = pars.mean(axis=0)
+					ps = pars.std(ddof=1, axis=0)
+					pc = ((pars[:,0] - pm[0]) * (pars[:,1] - pm[1])).sum() / len(pars) 
 		
+					fp[j, k, l, ll] = pm
+					dp[j, k, l, ll] = ps / sqrt(mcn)
+					cp[j, k, l, ll] = pc
+				
+					fs = array([sqrt(covs[:,0,0]).mean(), sqrt(covs[:,1,1]).mean()])
+					fss = array([sqrt(covs[:,0,0]).std(ddof=1), sqrt(covs[:,1,1]).std(ddof=1)])
+					fc = covs[:,0,1].mean()
+					fcs = covs[:,0,1].std(ddof=1)
+
+					pdist = (pm - array([m,q])) / ps
+					sdist = (fs - ps) / fss
+					cdist = (fc - pc) / fcs
+					chidist = (chisq.mean() - (n-2)) / chisq.std(ddof=1)
+					chisdist = (chisq.std(ddof=1) - sqrt(2*(n-2)))
+					print(pdist, chidist, sdist, cdist)
+					
+					pvalues = [
+						st.kstest(pars[:,0], 'norm', (m, fs[0]))[1],
+						st.kstest(pars[:,1], 'norm', (q, fs[1]))[1],
+						st.kstest(chisq, 'chi2', (n-2,))[1]
+					]
+					
+					print(pvalues)
+				
 				if showplot:
 					figure('Fit with m=%g, q=%g, fun=%s' % (m, q, fitfun.__name__)).set_tight_layout(True)
 					clf()
