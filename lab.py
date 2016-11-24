@@ -277,7 +277,7 @@ def _fit_affine_odr(x, y, dx, dy):
 		rt[0] = - (x * srad + res) / rad
 		rt[1] = - 1 / srad
 		return rt
-	p0, _ = _fit_affine_yerr(x, y, dy)
+	p0, _ = _fit_affine_unif_err(x, y)
 	par, cov, _, _, _ = leastsq(residual, p0, Dfun=jac, col_deriv=True, full_output=True)
 	return par, cov
 
@@ -293,9 +293,9 @@ def _fit_linear_odr(x, y, dx, dy):
 		res = (y - p[0]*x) * dx2 * p[0] / srad
 		rt[0] = - (x * srad + res) / rad
 		return rt
-	p0, _ = _fit_linear_yerr(x, y, dy)
+	p0, _ = _fit_affine_unif_err(x, y)
 	par, cov, _, _, _ = leastsq(residual, (p0[0],), Dfun=jac, col_deriv=True, full_output=True)
-	return np.array([par[0], [0]]), np.array([cov[0,0], 0], [0, 0]])
+	return np.array([par[0], [0]]), np.array([[cov[0,0], 0], [0, 0]])
 
 def _fit_affine_yerr(x, y, sigmay):
 	dy2 = sigmay ** 2
@@ -312,6 +312,14 @@ def _fit_affine_yerr(x, y, sigmay):
 	vab = -sx / denom
 	return np.array([a, b]), np.array([[vaa, vab], [vab, vbb]])
 
+def _fit_linear_yerr(x, y, sigmay):
+	dy2 = sigmay ** 2
+	sx2 = (x ** 2 / dy2).sum()
+	sxy = (x * y / dy2).sum()
+	a = sxy / sx2
+	vaa = 1 / sx2
+	return np.array([a, 0]), np.array([[vaa, 0], [0, 0]])
+
 def _fit_affine_unif_err(x, y):
 	sy = y.sum()
 	sx2 = (x ** 2).sum()
@@ -326,26 +334,53 @@ def _fit_affine_unif_err(x, y):
 	vab = -sx / denom
 	return np.array([a, b]), np.array([[vaa, vab], [vab, vbb]])
 
-def _fit_linear_yerr(x, y, sigmay):
-	dy2 = sigmay ** 2
-	sx2 = (x ** 2 / dy2).sum()
-	sxy = (x * y / dy2).sum()
-	a = sxy / sx2
-	b = 0
-	vaa = 1 / sx2
-	vbb = 0
-	vab = 0
-	return np.array([a, b]), np.array([[vaa, vab], [vab, vbb]])
-
 def _fit_linear_unif_err(x, y):
 	sx2 = (x ** 2).sum()
 	sxy = (x * y).sum()
 	a = sxy / sx2
-	b = 0
 	vaa = 1 / sx2
-	vbb = 0
-	vab = 0
-	return np.array([a, b]), np.array([[vaa, vab], [vab, vbb]])
+	return np.array([a, 0]), np.array([[vaa, 0], [0, 0]])
+
+def _fit_affine_xerr(x, y, dx):
+	par, cov = _fit_affine_yerr(y, x, dx)
+	m, q = par
+	dmm, dmq, _, dqq = cov.flat
+	# par = np.array([1/m, -q/m])
+	# J = np.array([[-1/m**2, 0], [q/m**2, -1/m]])
+	# cov = J.dot(cov).dot(J.T)
+	par[0] = 1 / m
+	par[1] = -q / m
+	m4 = m**4
+	cov[0,0] = dmm / m4
+	cov[1,1] = (-2 * dmq * m * q + dqq * m**2 + dmm * q**2) / m4
+	cov[0,1] = (-dmm * q + dmq * m) / m4
+	cov[1,0] = cov[0,1]
+	return par, cov
+
+def _fit_linear_xerr(x, y, dx):
+	par, cov = _fit_linear_yerr(y, x, dx)
+	m = par[0]
+	dmm = cov[0,0]
+	par[0] = 1 / m
+	cov[0,0] = dmm / m**4
+	return par, cov
+
+_fit_lin_funcs = [
+	[
+		_fit_linear_odr,
+		_fit_linear_yerr,
+		_fit_linear_xerr,
+		_fit_linear_unif_err
+	],
+	[
+		_fit_affine_odr,
+		_fit_affine_yerr,
+		_fit_affine_xerr,
+		_fit_affine_unif_err
+	]
+]
+
+_fit_lin_ddofs = [1, 2]
 
 def fit_linear(x, y, dx=None, dy=None, offset=True, absolute_sigma=True):
 	"""
@@ -390,115 +425,35 @@ def fit_linear(x, y, dx=None, dy=None, offset=True, absolute_sigma=True):
 	"""
 	x = np.asarray(x)
 	y = np.asarray(y)
-	if offset:
-		fun_fit = _fit_affine_yerr
-		fun_fit_dynone = _fit_affine_unif_err
-		fun_fit_xy = _fit_affine_odr
-		ddof = 2
-	else:
-		fun_fit = _fit_linear_yerr
-		fun_fit_dynone = _fit_linear_unif_err
-		fun_fit_xy = _fit_linear_odr
-		ddof = 1
+	offset = bool(offset)
+	fitfun = _fit_lin_funcs[offset]
+	ddof = _fit_lin_ddofs[offset]
 	if not (dy is None):
 		if not (dx is None): # dx, dy
 			dx = np.asarray(dx)
 			dy = np.asarray(dy)
-			par, cov = fun_fit_xy(x, y, dx, dy)
+			par, cov = fitfun[0](x, y, dx, dy)
 			if not absolute_sigma:
 				chisq_rid = ((y - par[0]*x - par[1])**2 / (dy**2 + (par[0]*dx)**2)).sum() / (len(x) - ddof)
 				cov *= chisq_rid
 		else: # dy
 			dy = np.asarray(dy)
-			par, cov = fun_fit(x, y, dy)
+			par, cov = fitfun[1](x, y, dy)
 			if not absolute_sigma:
 				chisq_rid = (((y - par[0]*x - par[1]) / dy)**2).sum() / (len(x) - ddof)
 				cov *= chisq_rid
 	else:
 		if not (dx is None): # dx
 			dx = np.asarray(dx)
-			par1, cov1 = fun_fit(y, x, dx)
+			par, cov = fitfun[2](x, y, dx)
 			if not absolute_sigma:
-				chisq_rid = (((x - par1[0]*y - par1[1]) / dx)**2).sum() / (len(y) - ddof)
-				cov1 *= chisq_rid
-			m, q = par
-			par = np.array([1/m, -q/m])
-			J = np.array([[-1/m**2, 0], [q/m**2, -1/m]])
-			cov = J.dot(cov1).dot(J.T)
+				chisq_rid = (((y - par[0]*x - par[1]) / (par[0]*dx))**2).sum() / (len(x) - ddof)
+				cov *= chisq_rid
 		else: # no error
-			par, cov = fun_fit_dynone(x, y)
+			par, cov = fitfun[3](x, y)
 			chisq_rid = ((y - par[0]*x - par[1])**2).sum() / (len(x) - ddof)
 			cov *= chisq_rid
 	return par, cov
-
-def fit_affine_noerr(x, y):
-	"""
-		fit y = a * x + b
-		
-		Parameters
-		----------
-		x : M-length array
-			independent data
-		y : M-length array
-			dependent data
-		
-		Returns
-		-------
-		a : float
-			optimal value for a
-		b : float
-			optimal value for b
-	"""
-	x = np.asarray(x)
-	y = np.asarray(y)
-	sy = math.fsum(y)
-	sx2 = math.fsum(x ** 2)
-	sx = math.fsum(x)
-	sxy = math.fsum(x * y)
-	denom = len(x) * sx2 - sx ** 2
-	a = (len(x) * sxy  - sx * sy) / denom
-	b = (sy * sx2 - sx * sxy) / denom
-	return np.array([a, b])
-
-def fit_affine_xerr(x, y, sigmax):
-	"""
-	fit y = m * x + q
-	
-	Parameters
-	----------
-	x : M-length array
-		independent data
-	y : M-length array
-		dependent data
-	sigmax : M-length array
-		standard deviation of x
-	
-	Returns
-	-------
-	par:
-		estimates (m, q)
-	cov:
-		covariance matrix m,q
-	
-	Notes
-	-----
-	Implementation: consider the inverse relation:
-		x = 1/m * y - q/m
-	find 1/m and -q/m using fit_linear then compute m, q and their variances
-	with first-order error propagation.
-	"""
-	x = np.asarray(x)
-	y = np.asarray(y)
-	sigmax = np.asarray(sigmax)
-	par, cov = _fit_affine_yerr(y, x, sigmax)
-	m, q = par
-	dmm, dmq, _, dqq = cov.flat
-	a = 1 / m
-	b = -q / m
-	daa = a**2 * (dmm/m**2)
-	dbb = b**2 * (dqq/q**2 + dmm/m**2 + 2*dmq/(-q*m))
-	dab = dmm*(-1/m**2)*(q/m**2) + dmq*(-1/m**2 * -1/m)
-	return np.array([a, b]), np.array([[daa, dab], [dab, dbb]])
 
 def fit_const_yerr(y, sigmay):
 	"""
@@ -549,6 +504,7 @@ _util_mm_esr_data = dict(
 	dm3900=dict(
 		desc='multimeter Digimaster DM 3900 plus',
 		type='digital',
+		voltres=10e+6,
 		volt=dict(
 			scales=[0.2, 2, 20, 200, 1000],
 			perc=[0.5] * 4 + [0.8],
@@ -559,6 +515,7 @@ _util_mm_esr_data = dict(
 			perc=[1.2, 0.8, 0.8, 0.8, 1.2],
 			digit=[3] * 5
 		),
+		cdt=0.2,
 		ampere=dict(
 			scales=[2 * 10**z for z in range(-5, 2)],
 			perc=[2, 0.5, 0.5, 0.5, 1.2, 1.2, 2],
@@ -578,6 +535,7 @@ _util_mm_esr_data = dict(
 	lab3=dict(
 		desc='multimeter from lab III course',
 		type='digital',
+		voltres=10e+6,
 		volt=dict(
 			scales=[0.2, 2, 20, 200, 1000],
 			perc=[0.5] * 4 + [0.8],
@@ -588,6 +546,7 @@ _util_mm_esr_data = dict(
 			perc=[1.2, 0.8, 0.8, 0.8, 1.2],
 			digit=[3] * 5
 		),
+		cdt=0.2,
 		ampere=dict(
 			scales=[2e-3, 20e-3, 0.2, 10],
 			perc=[0.8, 0.8, 1.5, 2.0],
@@ -612,6 +571,7 @@ _util_mm_esr_data = dict(
 	kdm700=dict(
 		desc='multimeter GBC Mod. KDM-700NCV',
 		type='digital',
+		voltres=10e+6,
 		volt=dict(
 			scales=[0.2, 2, 20, 200, 1000],
 			perc=[0.5] * 4 + [0.8],
@@ -622,6 +582,7 @@ _util_mm_esr_data = dict(
 			perc=[1.2, 0.8, 0.8, 0.8, 1.2],
 			digit=[3] * 5
 		),
+		cdt=0.2,
 		ampere=dict(
 			scales=[2 * 10**z for z in range(-5, 0)] + [10],
 			perc=[2, 0.8, 0.8, 0.8, 1.5, 2],
@@ -643,8 +604,8 @@ _util_mm_esr_data = dict(
 		type='analog',
 		volt=dict(
 			scales=[0.1, 2, 10, 50, 200, 500, 1000],
-			relres=[50] * 7,
-			valg=[1] * 7
+			relres=[50] * 7, # scale / resolution
+			valg=[1] * 7 # guaranteed error / scale * 100
 		),
 		volt_ac=dict(
 			scales=[10, 50, 250, 750],
@@ -738,11 +699,11 @@ def util_mm_er(x, scale, metertype='lab3', unit='volt', sqerr=False):
 	if typ == 'digital':
 		e = errsum(x * info['perc'][idx] / 100.0, info['digit'][idx] * 10**(idx + math.log10(info['scales'][0] / 2.0) - 3))
 		if unit == 'volt' or unit == 'volt_ac':
-			r = 10e+6
+			r = info['voltres']
 		elif unit == 'ampere' or unit == 'ampere_ac':
-			r = 0.2 / s
+			r = info['cdt'] / s
 	elif typ == 'analog':
-		e = x * errsum(0.5 / info['relres'][idx], info['valg'][idx] / 100.0 * s)
+		e = s * errsum(0.5 / info['relres'][idx], info['valg'][idx] / 100.0)
 		if unit == 'volt' or unit == 'volt_ac':
 			r = 20000 * s
 		elif unit == 'ampere' or unit == 'ampere_ac':

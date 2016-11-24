@@ -16,12 +16,12 @@ stattest = True # perform statistical test after monte carlo
 # qs = linspace(-2,2,40) # offset
 ms = array([1])
 qs = array([1])
-n = 10 # number of points
+n = 1000 # number of points
 # mcns = linspace(sqrt(100), sqrt(1000), 40)**2 # monte carlo runs
 mcns = [10000]
-fitfun = lab._fit_affine_odr
+fitfun = lab._fit_affine_xerr
 xmean = linspace(0, 1, n)
-dys = outer([1], st.norm.rvs(size=n)*.0002+.001)
+dys = outer([1], zeros(n))
 dxs = outer([1], st.norm.rvs(size=n)*.0002+.001)
 # dxs = outer(linspace(1, 10, len(mcns)), linspace(1,100,n)*.001)
 # dx = st.norm.rvs(size=n)*.02+.1
@@ -79,8 +79,10 @@ for ll in range(len(dys)):
 					start = time.time()
 					if fitfun == lab.fit_generic_xyerr3:
 						par, cov = fitfun(linfun, dxlinfun, dplinfun, dpxlinfun, x, y, dx, dy, (m, q))
-					elif fitfun == lab.fit_linear:
+					elif fitfun == fit_linear_ev:
 						par, cov = fitfun(x, y, dx, dy, conv_diff=1e-6, max_cycles=10)
+					elif fitfun == lab.fit_linear:
+						par, cov = fitfun(x, y, dx, dy)
 					elif fitfun == fit_generic_xyerr4:
 						par, cov = fitfun(linfun, ilinfun, dplinfun, dpilinfun, x, y, dx, dy, (m, q))
 					elif fitfun == lab.fit_generic_xyerr2:
@@ -89,6 +91,8 @@ for ll in range(len(dys)):
 						par, cov = fitfun(x, y, dx, dy)
 					elif fitfun == lab._fit_affine_odr:
 						par, cov = fitfun(x, y, dx, dy)
+					elif fitfun == lab._fit_affine_xerr:
+						par, cov = fitfun(x, y, dx)
 					end = time.time()
 					# save results
 					if showplot or stattest:
