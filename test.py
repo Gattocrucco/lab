@@ -11,18 +11,18 @@ from strangefit import *
 showplot = True # show plot after monte carlo run with fixed data parameters
 showmqplot = False # show parameter biases with fixed data
 showmqdxdyplot = False # show parameter vs. errors
-stattest = True # perform statistical test after monte carlo
-# ms = linspace(-2,2,40) # slope
-# qs = linspace(-2,2,40) # offset
+stattest = False # perform statistical test after monte carlo
+# ms = linspace(-2,2,20) # slope
+# qs = linspace(-2,2,20) # offset
 ms = array([1])
 qs = array([1])
-n = 1000 # number of points
+n = 100 # number of points
 # mcns = linspace(sqrt(100), sqrt(1000), 40)**2 # monte carlo runs
-mcns = [10000]
-fitfun = lab._fit_affine_xerr
+mcns = [1000]
+fitfun = lab._fit_affine_odr
 xmean = linspace(0, 1, n)
-dys = outer([1], zeros(n))
-dxs = outer([1], st.norm.rvs(size=n)*.0002+.001)
+dys = outer([100], st.norm.rvs(size=n)*.0002+.001)
+dxs = outer([100], st.norm.rvs(size=n)*.0002+.001)
 # dxs = outer(linspace(1, 10, len(mcns)), linspace(1,100,n)*.001)
 # dx = st.norm.rvs(size=n)*.02+.1
 # dy = st.norm.rvs(size=n)*.02+.1
@@ -93,6 +93,8 @@ for ll in range(len(dys)):
 						par, cov = fitfun(x, y, dx, dy)
 					elif fitfun == lab._fit_affine_xerr:
 						par, cov = fitfun(x, y, dx)
+					elif fitfun == lab._fit_affine_yerr:
+						par, cov = fitfun(x, y, dy)
 					end = time.time()
 					# save results
 					if showplot or stattest:
@@ -102,14 +104,15 @@ for ll in range(len(dys)):
 					pars[i] = par
 					covs[i] = cov
 				
-				if stattest:
-					pm = pars.mean(axis=0)
-					ps = pars.std(ddof=1, axis=0)
-					pc = ((pars[:,0] - pm[0]) * (pars[:,1] - pm[1])).sum() / len(pars) 
-		
-					fp[j, k, l, ll] = pm
-					dp[j, k, l, ll] = ps / sqrt(mcn)
-					cp[j, k, l, ll] = pc
+				pm = pars.mean(axis=0)
+				ps = pars.std(ddof=1, axis=0)
+				pc = ((pars[:,0] - pm[0]) * (pars[:,1] - pm[1])).sum() / len(pars) 
+	
+				fp[j, k, l, ll] = pm
+				dp[j, k, l, ll] = ps / sqrt(mcn)
+				cp[j, k, l, ll] = pc
+				
+				if stattest or showplot:
 				
 					fs = array([sqrt(covs[:,0,0]).mean(), sqrt(covs[:,1,1]).mean()])
 					fss = array([sqrt(covs[:,0,0]).std(ddof=1), sqrt(covs[:,1,1]).std(ddof=1)])
@@ -131,79 +134,100 @@ for ll in range(len(dys)):
 					
 					print(pvalues)
 				
+				def plot_text(string, loc=2):
+					locs = [
+						[],
+						[.95, .95, 'right', 'top'],
+						[.05, .95, 'left', 'top']
+					]
+					loc = locs[loc]
+					text(loc[0], loc[1], string, horizontalalignment=loc[2], verticalalignment=loc[3], transform=gca().transAxes)
+				
 				if showplot:
-					figure('Fit with m=%g, q=%g, fun=%s' % (m, q, fitfun.__name__)).set_tight_layout(True)
+					figure('Fit with function %s' % fitfun.__name__).set_tight_layout(True)
 					clf()
+					nbins = int(sqrt(min(mcn, 1000)))
+					hcolor = (.9,.9,.9)
 					subplot(421)
 					title('$m\'-m$')
-					hist(pars[:, 0]-m, bins=int(sqrt(mcn)))
+					plot_text('True $m = $%g\nDistance = %.2g $\sigma$' % (m, pdist[0]))
+					hist(pars[:, 0]-m, bins=nbins, color=hcolor)
 					subplot(423)
 					title('$q\'-q$')
-					hist(pars[:, 1]-q, bins=int(sqrt(mcn)))
+					plot_text('True $q = $%g\nDistance = %.2g $\sigma$' % (q, pdist[1]))
+					hist(pars[:, 1]-q, bins=nbins, color=hcolor)
 					subplot(422)
-					title('$\Delta m$')
-					hist(sqrt(covs[:, 0, 0]), bins=int(sqrt(mcn)))
+					title('$(\Delta m\')\' - \Delta m\'$')
+					plot_text('True $\sigma = $%.2g\nDistance = %.2g %%' % (ps[0], 100*(fs[0] - ps[0]) / ps[0]))
+					hist(sqrt(covs[:,0,0]) - ps[0], bins=nbins, color=hcolor)
+					ticklabel_format(style='sci',axis='x',scilimits=(-2,3))
 					subplot(424)
-					title('$\Delta q$')
-					hist(sqrt(covs[:, 1, 1]), bins=int(sqrt(mcn)))
+					title('$(\Delta q\')\' - \Delta q\'$')
+					plot_text('True $\sigma = $%.2g\nDistance = %.2g %%' % (ps[1], 100*(fs[1] - ps[1]) / ps[1]))
+					hist(sqrt(covs[:,1,1]) - ps[1], bins=nbins, color=hcolor)
+					ticklabel_format(style='sci',axis='x',scilimits=(-2,3))
 					subplot(425)
 					title('$(m\',q\')-(m,q)$')
 					plot(pars[:, 0]-m, pars[:, 1]-q, '.k', markersize=2)
 					grid()
 					subplot(426)
-					title('$\\rho mq$')
-					hist(covs[:, 0, 1] / sqrt(covs[:, 0, 0]*covs[:, 1, 1]), bins=int(sqrt(mcn)))
+					title('$\\rho_{m\'q\'}\'-\\rho_{m\'q\'}$')
+					plot_text('True $\\rho =$ %.2g\nDistance = %.2g %%' % (pc / ps[0] / ps[1], 100*(fc - pc) / pc))
+					hist(covs[:, 0, 1] / sqrt(covs[:, 0, 0]*covs[:, 1, 1]) - pc / ps[0] / ps[1], bins=nbins, color=hcolor)
+					ticklabel_format(style='sci',axis='x',scilimits=(-2,3))
 					subplot(427)
 					title('$\chi^2$')
-					hist(chisq, bins=int(sqrt(mcn)))
+					plot_text('KSTest p-value = %.2g %%\nTrue dof = %d\nDistance = %.2g $\sigma$' % (100*pvalues[2], n-2, chidist), loc=1)
+					hist(chisq, bins=nbins, color=hcolor)
 					subplot(428)
 					title('time [ms]')
-					hist(times*1000, bins=int(sqrt(mcn)))
+					plot_text('Average time = %.2g ms' % (1000*times.mean()), loc=1)
+					hist(times*1000, bins=nbins, color=hcolor)
 					show()
 
 if showmqplot:
-	figure('Slope, fit with fun=%s' % fitfun.__name__)
+	figure('Slope, fit with function %s' % fitfun.__name__).set_tight_layout(True)
 	clf()
 	subplot(211)
-	errorbar(ms, fp[:, 0, 0, 0, 0], dp[:, 0, 0, 0, 0], fmt=',')
+	errorbar(ms, fp[:, 0, 0, 0, 0] - ms, dp[:, 0, 0, 0, 0], fmt=',')
 	xlabel('True m')
-	ylabel('Fitted m, q=%g' % qs[0])
+	ylabel('$m\'-m$, q=%g' % qs[0])
 	grid()
 	subplot(212)
-	errorbar(qs, fp[0, :, 0, 0, 0], dp[0, :, 0, 0, 0], fmt=',')
+	errorbar(qs, fp[0, :, 0, 0, 0] - ms[0], dp[0, :, 0, 0, 0], fmt=',')
 	xlabel('True q')
-	ylabel('Fitted m, m=%g' % ms[0])
+	ylabel('$m\'-m$, m=%g' % ms[0])
 	grid()
 	tight_layout()
-	figure('Slope 3d, fit with fun=%s' % fitfun.__name__)
+	figure('Slope 3d, fit with function %s' % fitfun.__name__).set_tight_layout(True)
 	clf()
 	subplot(111, projection='3d')
 	X, Y = meshgrid(ms, qs)
-	gca().plot_surface(X, Y, fp[:,:,0,0,0].T)
+	gca().plot_surface(X, Y, (fp[:,:,0,0,0]-ms[:,newaxis]).T, rstride=1, cstride=1)
 	xlabel('True m')
 	ylabel('True q')
-	gca().set_zlabel('Fitted m')
+	gca().set_zlabel('$m\'-m$')
 
-	figure('Offset, fit with fun=%s' % fitfun.__name__)
+	figure('Offset, fit with function %s' % fitfun.__name__).set_tight_layout(True)
 	clf()
 	subplot(211)
-	errorbar(ms, fp[:, 0, 0, 0, 1], dp[:, 0, 0, 0, 1], fmt=',')
+	errorbar(ms, fp[:, 0, 0, 0, 1] - qs[0], dp[:, 0, 0, 0, 1], fmt=',')
 	xlabel('True m')
-	ylabel('Fitted q, q=%g' % qs[0])
+	ylabel('$q\'-q$, q=%g' % qs[0])
 	grid()
 	subplot(212)
-	errorbar(qs, fp[0, :, 0, 0, 1], dp[0, :, 0, 0, 1], fmt=',')
+	errorbar(qs, fp[0, :, 0, 0, 1] - qs, dp[0, :, 0, 0, 1], fmt=',')
 	xlabel('True q')
-	ylabel('Fitted q, m=%g' % ms[0])
+	ylabel('$q\'-q$, m=%g' % ms[0])
 	grid()
 	tight_layout()
-	figure('Offset 3d, fit with fun=%s' % fitfun.__name__)
+	figure('Offset 3d, fit with function %s' % fitfun.__name__).set_tight_layout(True)
 	clf()
 	subplot(111, projection='3d')
-	gca().plot_surface(X, Y, fp[:,:,0,0,1].T)
+	gca().plot_surface(X, Y, (fp[:,:,0,0,1]-qs[newaxis,:]).T, rstride=1, cstride=1)
 	xlabel('True m')
 	ylabel('True q')
-	gca().set_zlabel('Fitted q')
+	gca().set_zlabel('$q\'-q$')
 	show()
 
 if showmqdxdyplot:	

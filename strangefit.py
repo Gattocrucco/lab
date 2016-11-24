@@ -4,6 +4,7 @@ import numpy as np
 import time
 from scipy import odr
 from scipy.optimize import curve_fit, leastsq
+import lab
 
 def invs(a):
 	"""
@@ -108,12 +109,12 @@ def fit_linear_ev(x, y, dx=None, dy=None, offset=True, absolute_sigma=True, conv
 	x = np.asarray(x)
 	y = np.asarray(y)
 	if offset:
-		fun_fit = _fit_affine_yerr
-		fun_fit_dynone = _fit_affine_unif_err
+		fun_fit = lab._fit_affine_yerr
+		fun_fit_dynone = lab._fit_affine_unif_err
 		ddof = 2
 	else:
-		fun_fit = _fit_linear_yerr
-		fun_fit_dynone = _fit_linear_unif_err
+		fun_fit = lab._fit_linear_yerr
+		fun_fit_dynone = lab._fit_linear_unif_err
 		ddof = 1
 	if (dy is None) and (dx is None):
 		par, cov = fun_fit_dynone(x, y)
@@ -154,10 +155,19 @@ def fit_linear_ev(x, y, dx=None, dy=None, offset=True, absolute_sigma=True, conv
 			par, cov = fun_fit_dynone(x, y)
 			chisq_rid = (((y - par[0]*x - par[1]))**2).sum() / (len(x) - ddof)
 			cov *= chisq_rid
+	par, cov, cycles = _fit_affine_ev(fun_fit, x, y, dx, dy, par, cov, absolute_sigma, conv_diff, max_cycles)
+	if cycles == -1:
+		raise RuntimeError('Max cycles %d reached' % max_cycles)
+	if print_info:
+		print("fit_linear: cycles: %d" % (cycles))
+	return par, cov
+	
+def _fit_affine_ev(fun_fit, x, y, dx, dy, par, cov, absolute_sigma, conv_diff, max_cycles):
 	cycles = 1
 	while True:
 		if cycles >= max_cycles:
-			raise RuntimeError("Maximum number of fit cycles %d reached" % max_cycles)
+			cycles = -1
+			break
 		dyeff = np.sqrt(dy**2 + (par[0] * dx)**2)
 		npar, ncov = fun_fit(x, y, dyeff)
 		if not absolute_sigma:
@@ -170,6 +180,4 @@ def fit_linear_ev(x, y, dx=None, dy=None, offset=True, absolute_sigma=True, conv
 		cycles += 1
 		if (error < conv_diff).all() and (cerror < conv_diff).all():
 			break
-	if print_info:
-		print("fit_linear: cycles: %d" % (cycles))
-	return par, cov
+	return par, cov, cycles
