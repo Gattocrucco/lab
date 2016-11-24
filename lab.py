@@ -12,12 +12,15 @@ from scipy.optimize import curve_fit, leastsq
 # num2si
 # opzione unicode=True per usare mu
 #
+# fit_*_odr
+# vedere se c'è qualcosa di meglio di leastsq (es. least_squares?)
+#
 # util_format
 # opzione si=True per formattare come num2si
 # opzione errdig=(intero) per scegliere le cifre dell'errore
 #
-# fit_linear
-# è giusto usare il chiquadro effettivo per absolute_sigma? urge analisi teorica o monte carlo
+# fit_generic_xyerr3
+# convertire in funzione low-level e wrapparla in fit_generic_odr (o si può aggiungere un parametro method='odr' a fit generic?)
 #
 # fit_generic (nuova funzione)
 # mangia anche le funzioni sympy calcolandone jacb e jacd, riconoscendo se può fare un fit analitico
@@ -42,7 +45,6 @@ __all__ = [ # things imported when you do "from lab import *"
 	'fit_generic_xyerr',
 	'fit_generic_xyerr2',
 	'fit_generic_xyerr3',
-	'fit_generic_xyerr4',
 	'fit_linear',
 	'fit_const_yerr',
 	'util_mm_er',
