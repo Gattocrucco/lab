@@ -19,7 +19,7 @@ qs = array([1])
 n = 100 # number of points
 # mcns = linspace(sqrt(100), sqrt(1000), 40)**2 # monte carlo runs
 mcns = [1000]
-fitfun = lab._fit_affine_odr
+fitfun = 'numhoch' # ev, odr, numodr, odrpack, x, y, hoch, numhoch
 xmean = linspace(0, 1, n)
 dys = outer([100], st.norm.rvs(size=n)*.0002+.001)
 dxs = outer([100], st.norm.rvs(size=n)*.0002+.001)
@@ -77,24 +77,22 @@ for ll in range(len(dys)):
 					y = ymean + dy * deltay
 					# fit
 					start = time.time()
-					if fitfun == lab.fit_generic_xyerr3:
-						par, cov = fitfun(linfun, dxlinfun, dplinfun, dpxlinfun, x, y, dx, dy, (m, q))
-					elif fitfun == fit_linear_ev:
-						par, cov = fitfun(x, y, dx, dy, conv_diff=1e-6, max_cycles=10)
-					elif fitfun == lab.fit_linear:
-						par, cov = fitfun(x, y, dx, dy)
-					elif fitfun == fit_generic_xyerr4:
-						par, cov = fitfun(linfun, ilinfun, dplinfun, dpilinfun, x, y, dx, dy, (m, q))
-					elif fitfun == lab.fit_generic_xyerr2:
-						par, cov = fitfun(linfun, dxlinfun, dplinfun, x, y, dx, dy, (m, q))
-					elif fitfun == fit_linear_hoch:
-						par, cov = fitfun(x, y, dx, dy)
-					elif fitfun == lab._fit_affine_odr:
-						par, cov = fitfun(x, y, dx, dy)
-					elif fitfun == lab._fit_affine_xerr:
-						par, cov = fitfun(x, y, dx)
-					elif fitfun == lab._fit_affine_yerr:
-						par, cov = fitfun(x, y, dy)
+					if fitfun == 'numodr':
+						par, cov = lab.fit_generic_xyerr3(linfun, dxlinfun, dplinfun, dpxlinfun, x, y, dx, dy, (m, q))
+					elif fitfun == 'ev':
+						par, cov = lab.fit_linear(x, y, dx, dy, method='ev', conv_diff=1e-6, max_cycles=10)
+					elif fitfun == 'odr':
+						par, cov = lab._fit_affine_odr(x, y, dx, dy)
+					elif fitfun == 'numhoch':
+						par, cov = fit_generic_xyerr4(linfun, ilinfun, dplinfun, dpilinfun, x, y, dx, dy, (m, q))
+					elif fitfun == 'odrpack':
+						par, cov = lab.fit_generic_xyerr2(linfun, dxlinfun, dplinfun, x, y, dx, dy, (m, q))
+					elif fitfun == 'hoch':
+						par, cov = fit_linear_hoch(x, y, dx, dy)
+					elif fitfun == 'x':
+						par, cov = lab._fit_affine_xerr(x, y, dx)
+					elif fitfun == 'y':
+						par, cov = lab._fit_affine_yerr(x, y, dy)
 					end = time.time()
 					# save results
 					if showplot or stattest:
@@ -144,7 +142,7 @@ for ll in range(len(dys)):
 					text(loc[0], loc[1], string, horizontalalignment=loc[2], verticalalignment=loc[3], transform=gca().transAxes)
 				
 				if showplot:
-					figure('Fit with function %s' % fitfun.__name__).set_tight_layout(True)
+					figure('Fit with method “%s”, number of points %d, number of runs %d, avg dx ∕ x width = %.2g %%' % (fitfun, n, mcn, 100 * abs(dx).mean() / (max(xmean) - min(xmean))), figsize=(14,10)).set_tight_layout(True)
 					clf()
 					nbins = int(sqrt(min(mcn, 1000)))
 					hcolor = (.9,.9,.9)
@@ -183,10 +181,11 @@ for ll in range(len(dys)):
 					title('time [ms]')
 					plot_text('Average time = %.2g ms' % (1000*times.mean()), loc=1)
 					hist(times*1000, bins=nbins, color=hcolor)
+					savefig(gcf().canvas.get_window_title() + '.pdf')
 					show()
 
 if showmqplot:
-	figure('Slope, fit with function %s' % fitfun.__name__).set_tight_layout(True)
+	figure('Slope, fit with method “%s”' % fitfun).set_tight_layout(True)
 	clf()
 	subplot(211)
 	errorbar(ms, fp[:, 0, 0, 0, 0] - ms, dp[:, 0, 0, 0, 0], fmt=',')
@@ -199,7 +198,7 @@ if showmqplot:
 	ylabel('$m\'-m$, m=%g' % ms[0])
 	grid()
 	tight_layout()
-	figure('Slope 3d, fit with function %s' % fitfun.__name__).set_tight_layout(True)
+	figure('Slope 3d, fit with method “%s”' % fitfun).set_tight_layout(True)
 	clf()
 	subplot(111, projection='3d')
 	X, Y = meshgrid(ms, qs)
@@ -208,7 +207,7 @@ if showmqplot:
 	ylabel('True q')
 	gca().set_zlabel('$m\'-m$')
 
-	figure('Offset, fit with function %s' % fitfun.__name__).set_tight_layout(True)
+	figure('Offset, fit with method “%s”' % fitfun).set_tight_layout(True)
 	clf()
 	subplot(211)
 	errorbar(ms, fp[:, 0, 0, 0, 1] - qs[0], dp[:, 0, 0, 0, 1], fmt=',')
@@ -221,7 +220,7 @@ if showmqplot:
 	ylabel('$q\'-q$, m=%g' % ms[0])
 	grid()
 	tight_layout()
-	figure('Offset 3d, fit with function %s' % fitfun.__name__).set_tight_layout(True)
+	figure('Offset 3d, fit with method “%s”' % fitfun).set_tight_layout(True)
 	clf()
 	subplot(111, projection='3d')
 	gca().plot_surface(X, Y, (fp[:,:,0,0,1]-qs[newaxis,:]).T, rstride=1, cstride=1)
@@ -231,7 +230,7 @@ if showmqplot:
 	show()
 
 if showmqdxdyplot:	
-	figure('Slope vs dx, %s' % fitfun.__name__).set_tight_layout(True)
+	figure('Slope vs dx, %s' % fitfun).set_tight_layout(True)
 	clf()
 	subplot(211)
 	title('True m = %g, q = %g, sum(dy^2) = %g' % (ms[0], qs[0], (dys[0]**2).sum()))
@@ -245,7 +244,7 @@ if showmqdxdyplot:
 	errorbar((dys**2).sum(axis=-1), fp[0,0,0,:,0], dp[0,0,0,:,0], fmt=',')
 
 
-	figure('Offset vs dx, %s' % fitfun.__name__).set_tight_layout(True)
+	figure('Offset vs dx, %s' % fitfun).set_tight_layout(True)
 	clf()
 	subplot(211)
 	title('True m = %g, q = %g, sum(dy^2) = %g' % (ms[0], qs[0], (dys[0]**2).sum()))

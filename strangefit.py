@@ -42,8 +42,8 @@ def fit_linear_hoch(x, y, dx, dy):
 	"""
 	Stessa cosa di fit_generic_xyerr4 ma per le rette.
 	"""
-	par1, cov1 = _fit_affine_yerr(x, y, dy)
-	par3, cov3 = _fit_affine_yerr(y, x, dx)
+	par1, cov1 = lab._fit_affine_yerr(x, y, dy)
+	par3, cov3 = lab._fit_affine_yerr(y, x, dx)
 	m, q = par3
 	par2 = np.array([1/m, -q/m])
 	J = np.array([[-1/m**2, 0], [q/m**2, -1/m]])
