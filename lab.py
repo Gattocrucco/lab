@@ -1058,7 +1058,7 @@ def etastr(eta, progress, mininterval=np.inf):
 
 # this function taken from stackoverflow and modified
 # http://stackoverflow.com/questions/17973278/python-decimal-engineering-notation-for-mili-10e-3-and-micro-10e-6
-def num2si(x, format='%.16g', si=True, space=' '):
+def num2si(x, format='%.15g', si=True, space=' '):
 	"""
 	Returns x formatted in a simplified engineering format -
 	using an exponent that is a multiple of 3.
@@ -1097,7 +1097,7 @@ def num2si(x, format='%.16g', si=True, space=' '):
 	"""
 	x = float(x)
 	if x == 0:
-		return format % x
+		return format % x + space
 	exp = int(math.floor(math.log10(abs(x))))
 	exp3 = exp - (exp % 3)
 	x3 = x / (10 ** exp3)
@@ -1106,7 +1106,6 @@ def num2si(x, format='%.16g', si=True, space=' '):
 		exp3_text = 'yzafpnum kMGTPEZY'[(exp3 - (-24)) // 3]
 	elif exp3 == 0:
 		exp3_text = ''
-		space = ''
 	else:
 		exp3_text = 'e%s' % exp3
 	

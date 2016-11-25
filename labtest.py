@@ -1,15 +1,17 @@
 import unittest
 import lab
 
-class TestFormatting(unittest.TestCase):
+class TestLab(unittest.TestCase):
 
 	def test_num2si(self):
 		# generic check
 		self.assertEqual(lab.num2si(1312), '1.312 k')
 		# check crash on 0
-		self.assertEqual(lab.num2si(0), '0')
+		self.assertEqual(lab.num2si(0), '0 ')
 		# check that format options are respected
-		self.assertEqual(lab.num2si(1, format='%+g'), '+1')
+		self.assertEqual(lab.num2si(1, format='%+g'), '+1 ')
+		# check that default rounding is sufficient
+		self.assertEqual(lab.num2si(0.7), '700 m')
 	
 	def test_util_format(self):
 		# check that big-exponent values use exponential notation
