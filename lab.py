@@ -19,6 +19,12 @@ from scipy.optimize import curve_fit, leastsq
 # opzione si=True per formattare come num2si
 # opzione errdig=(intero) per scegliere le cifre dell'errore
 #
+# fit_generic_xyerr
+# convertire in fit_generic_ev
+#
+# fit_generic_xyerr2
+# sostituire con fit_generic
+#
 # fit_generic_xyerr3
 # convertire in funzione low-level e wrapparla in fit_generic_odr (o si può aggiungere un parametro method='odr' a fit generic?)
 #
@@ -367,6 +373,26 @@ def _fit_linear_xerr(x, y, dx):
 	cov[0,0] = dmm / m**4
 	return par, cov
 
+def _fit_affine_ev(fun_fit, x, y, dx, dy, par, cov, absolute_sigma=True, conv_diff=1e-7, max_cycles=5):
+	cycles = 1
+	while True:
+		if cycles >= max_cycles:
+			cycles = -1
+			break
+		dyeff = np.sqrt(dy**2 + (par[0] * dx)**2)
+		npar, ncov = fun_fit(x, y, dyeff)
+		if not absolute_sigma:
+			chisq_rid = (((y - npar[0]*x - npar[1]) / dyeff)**2).sum() / (len(x) - ddof)
+			ncov *= chisq_rid
+		error = abs(npar - par) / npar
+		cerror = abs(ncov - cov) / ncov
+		par = npar
+		cov = ncov
+		cycles += 1
+		if (error < conv_diff).all() and (cerror < conv_diff).all():
+			break
+	return par, cov, cycles
+
 _fit_lin_funcs = [
 	[
 		_fit_linear_odr,
@@ -384,7 +410,7 @@ _fit_lin_funcs = [
 
 _fit_lin_ddofs = [1, 2]
 
-def fit_linear(x, y, dx=None, dy=None, offset=True, absolute_sigma=True):
+def fit_linear(x, y, dx=None, dy=None, offset=True, absolute_sigma=True, method='odr', print_info=False, **kw):
 	"""
 	Fit y = m * x + q
 	
@@ -412,18 +438,29 @@ def fit_linear(x, y, dx=None, dy=None, offset=True, absolute_sigma=True):
 		errors on parameters to values that would be obtained if the
 		chisquare matched the degrees of freedom.
 		Simply said: True for physicists, False for engineers
-
+	method : string, one of 'odr', 'ev'
+		fit method to use when there are errors on both x and y.
+		'odr': use orthogonal distance regression
+		'ev': use effective variance (WARNING: biased, use if you know what you are
+		doing)
+	print_info : bool
+		If True, print information about the fit.
+	
+	Keyword arguments
+	-----------------
+	When method='ev', the following parameters are meaningful:
+	conv_diff : number
+		relative difference for convergence
+	max_cycles : integer
+		The maximum number of fits done. If this maximum is reached, an exception
+		is raised.
+	
 	Returns
 	-------
 	par:
 		estimates (m, q)
 	cov:
-		covariance matrix m,q
-
-	Notes
-	-----
-	Algorithm: orthogonal distance regression. If errors on one axis are zero,
-	the algorithm is analytical.
+		covariance matrix m, q
 	"""
 	x = np.asarray(x)
 	y = np.asarray(y)
@@ -434,10 +471,29 @@ def fit_linear(x, y, dx=None, dy=None, offset=True, absolute_sigma=True):
 		if not (dx is None): # dx, dy
 			dx = np.asarray(dx)
 			dy = np.asarray(dy)
-			par, cov = fitfun[0](x, y, dx, dy)
-			if not absolute_sigma:
-				chisq_rid = ((y - par[0]*x - par[1])**2 / (dy**2 + (par[0]*dx)**2)).sum() / (len(x) - ddof)
-				cov *= chisq_rid
+			if method == 'odr':
+				par, cov = fitfun[0](x, y, dx, dy)
+				if not absolute_sigma:
+					chisq_rid = ((y - par[0]*x - par[1])**2 / (dy**2 + (par[0]*dx)**2)).sum() / (len(x) - ddof)
+					cov *= chisq_rid
+			elif method == 'ev':
+				ndy0 = np.asarray(dy != 0)
+				if ndy0.sum() > ddof:
+					par, cov = fitfun[1](x[ndy0], y[ndy0], dy[ndy0])
+					if not absolute_sigma:
+						chisq_rid = (((y - par[0]*x - par[1]) / dy)**2).sum() / (len(x) - ddof)
+						cov *= chisq_rid
+				else:
+					par, cov = fitfun[3](x, y)
+					chisq_rid = (((y - par[0]*x - par[1]))**2).sum() / (len(x) - ddof)
+					cov *= chisq_rid
+				par, cov, cycles = _fit_affine_ev(fitfun[1], x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, **kw)
+				if cycles == -1:
+					raise RuntimeError('Max cycles %d reached' % max_cycles)
+				if print_info:
+					print("fit_linear: cycles: %d" % (cycles))
+			else:
+				raise KeyError(method)
 		else: # dy
 			dy = np.asarray(dy)
 			par, cov = fitfun[1](x, y, dy)
