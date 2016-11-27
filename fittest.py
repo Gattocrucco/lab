@@ -10,34 +10,29 @@ from scipy.optimize import curve_fit
 import os
 
 #### PARAMETERS ####
-showplot = True # show plot after monte carlo run with fixed data parameters
-showmqplot = False # show parameter biases with fixed data
-showmqdxdyplot = False # show parameter vs. errors
+showplot = False # show plot after monte carlo run with fixed parameters
+showpsplot = True # show parameter biases with fixed data
+showpsdtplot = False # show parameter vs. errors
 stattest = False # perform statistical test after monte carlo
-# ms = linspace(-2,2,20) # slope
-# qs = linspace(-2,2,20) # offset
-# ms = array([1])
-# qs = array([1])
-p0s = [
-	[1],
-	[1],
-] # true parameters, axis 0 = parameter, axis 1 = values
-f = lambda x, a, b: a * sp.exp(x / b) # sympy function
-# f = lambda x, m, q : m * x + q
-# f = lambda x, m : m * x
-n = 100 # number of points
-# mcns = linspace(sqrt(100), sqrt(1000), 40)**2 # monte carlo runs
-mcn = 1000
-fitfun = 'odr' # ev, odr, odrpack, curve_fit, hoch
-xmean = linspace(0, 1, n)
-dys = outer([1], ones(n)*.01)
-dxs = outer([1], ones(n)*.01)
-# dxs = outer(linspace(1, 10, len(mcns)), linspace(1,100,n)*.001)
-# dx = st.norm.rvs(size=n)*.02+.1
-# dy = st.norm.rvs(size=n)*.02+.1
-# dy = 0
+p0s = [ # true parameters, axis 0 = parameter, axis 1 = values
+	linspace(-1,1,20),
+	logspace(0,1,20),
+]
+fs = [ # sympy functions
+	lambda x, a, b: a * sp.exp(x / b),
+	lambda x, m, q: m * x + q,
+	lambda x, m: m * x
+]
+f = fs[0] # function to fit
+mcn = 100 # number of repetitions (monte carlo)
+fitfun = 'ev' # ev, odr, odrpack, curve_fit, hoch
+xmean = linspace(0, 3, 100) # true x
+n = len(xmean) # number of points
+dys = outer([1], ones(n)*.1) # errors, axis 0 = dataset, axis 1 = point
+dxs = outer([1], ones(n)*.1)
 ####################
 
+# initialize symbols
 psym = [sp.Symbol('p_%d' % i, real=True) for i in range(len(p0s))]
 xsym = sp.Symbol('x', real=True)
 syms = [xsym] + psym
@@ -108,7 +103,7 @@ for ll in range(len(dys)):
 				# fit
 				start = time.time()
 				if fitfun == 'ev':
-					par, cov = lab.fit_generic_xyerr(f, dfdx, x, y, dx, dy, p0=p0)
+					par, cov = lab.fit_generic_xyerr(f, dfdx, x, y, dx, dy, p0=p0, max_cycles=10)
 				elif fitfun == 'odr':
 					par, cov = lab.fit_generic_xyerr3(f, dfdx, dfdp, dfdpdx, x, y, dx, dy, p0)
 				elif fitfun == 'hoch':
@@ -135,7 +130,7 @@ for ll in range(len(dys)):
 			ps = sqrt(diag(pc))
 
 			fp[(l, ll) + K] = pm
-			cp[(l, ll) + K] = pc / sqrt(len(pars))
+			cp[(l, ll) + K] = pc / len(pars)
 			
 			if stattest or showplot:
 				
@@ -241,52 +236,42 @@ for ll in range(len(dys)):
 				savefig('%s-%02d.pdf' % (filename, i))
 				show()
 
-if showmqplot:
-	figure('Slope, fit with method “%s”' % fitfun).set_tight_layout(True)
+if showpsplot:
+	figure('Fit with method “%s”, function %s, parameter biases' % (fitfun, fstr), figsize=(14,10)).set_tight_layout(True)
 	clf()
-	subplot(211)
-	errorbar(ms, fp[:, 0, 0, 0, 0] - ms, dp[:, 0, 0, 0, 0], fmt=',')
-	xlabel('True m')
-	ylabel('$m\'-m$, q=%g' % qs[0])
-	grid()
-	subplot(212)
-	errorbar(qs, fp[0, :, 0, 0, 0] - ms[0], dp[0, :, 0, 0, 0], fmt=',')
-	xlabel('True q')
-	ylabel('$m\'-m$, m=%g' % ms[0])
-	grid()
-	tight_layout()
-	figure('Slope 3d, fit with method “%s”' % fitfun).set_tight_layout(True)
-	clf()
-	subplot(111, projection='3d')
-	X, Y = meshgrid(ms, qs)
-	gca().plot_surface(X, Y, (fp[:,:,0,0,0]-ms[:,newaxis]).T, rstride=1, cstride=1)
-	xlabel('True m')
-	ylabel('True q')
-	gca().set_zlabel('$m\'-m$')
-
-	figure('Offset, fit with method “%s”' % fitfun).set_tight_layout(True)
-	clf()
-	subplot(211)
-	errorbar(ms, fp[:, 0, 0, 0, 1] - qs[0], dp[:, 0, 0, 0, 1], fmt=',')
-	xlabel('True m')
-	ylabel('$q\'-q$, q=%g' % qs[0])
-	grid()
-	subplot(212)
-	errorbar(qs, fp[0, :, 0, 0, 1] - qs, dp[0, :, 0, 0, 1], fmt=',')
-	xlabel('True q')
-	ylabel('$q\'-q$, m=%g' % ms[0])
-	grid()
-	tight_layout()
-	figure('Offset 3d, fit with method “%s”' % fitfun).set_tight_layout(True)
-	clf()
-	subplot(111, projection='3d')
-	gca().plot_surface(X, Y, (fp[:,:,0,0,1]-qs[newaxis,:]).T, rstride=1, cstride=1)
-	xlabel('True m')
-	ylabel('True q')
-	gca().set_zlabel('$q\'-q$')
+	for i in range(len(p0s)): # p_i = fitted
+		for j in range(len(p0s)): # p_j = true
+			subplot(len(p0s), len(p0s), 1 + i * len(p0s) + j)
+			K = [0] * len(p0s)
+			K[j] = Ellipsis
+			K = tuple(K)
+			errorbar(p0s[j], fp[(0, 0) + K + (i,)] - (asarray(p0s[i]) if i == j else p0s[i][0]), sqrt(cp[(0, 0) + K + (i, i)]), fmt=',')
+			xlabel('True $p_{%d}$' % j)
+			ylabel('$p_{%d}\'-p_{%d}$' % (i, i))
+			pstr = ''
+			for k in range(len(p0s)):
+				if k != j:
+					pstr += '$p_{%d}$ = %.2g\n' % (k, p0s[k][0])
+			plot_text(pstr)
+			ticklabel_format(style='sci', axis='both', scilimits=(-3,3))
+			grid()
+				
+	filename = gcf().canvas.get_window_title().replace('/', '∕')
+	i = 1
+	while os.path.exists('%s-%02d.pdf' % (filename, i)):
+		i += 1
+	savefig('%s-%02d.pdf' % (filename, i))
 	show()
+	# figure('Slope 3d, fit with method “%s”' % fitfun).set_tight_layout(True)
+	# clf()
+	# subplot(111, projection='3d')
+	# X, Y = meshgrid(ms, qs)
+	# gca().plot_surface(X, Y, (fp[:,:,0,0,0]-ms[:,newaxis]).T, rstride=1, cstride=1)
+	# xlabel('True m')
+	# ylabel('True q')
+	# gca().set_zlabel('$m\'-m$')
 
-if showmqdxdyplot:	
+if showpsdtplot:
 	figure('Slope vs dx, %s' % fitfun).set_tight_layout(True)
 	clf()
 	subplot(211)
