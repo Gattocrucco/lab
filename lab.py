@@ -9,9 +9,6 @@ from scipy.optimize import curve_fit, leastsq
 
 # TODO
 #
-# num2si
-# opzione unicode=True per usare mu
-#
 # fit_*_odr
 # vedere se c'è qualcosa di meglio di leastsq (es. least_squares?)
 #
@@ -48,7 +45,6 @@ from scipy.optimize import curve_fit, leastsq
 __all__ = [ # things imported when you do "from lab import *"
 	'curve_fit_patched',
 	'fit_norm_cov',
-	'fit_generic_xyerr',
 	'fit_generic_xyerr2',
 	'fit_generic_xyerr3',
 	'fit_linear',
@@ -129,7 +125,24 @@ def fit_norm_cov(cov):
 			ncov[i,j] /= sigma[i]*sigma[j]
 	return ncov
 
-def fit_generic_xyerr(f, dfdx, x, y, sigmax, sigmay, p0=None, print_info=False, absolute_sigma=True, conv_diff=0.001, max_cycles=5, **kw):
+def _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=True, conv_diff=1e-7, max_cycles=5, **kw):
+	cycles = 1
+	while True:
+		if cycles >= max_cycles:
+			cycles = -1
+			break
+		dyeff = np.sqrt(dy**2 + (dfdx(x, *par) * dx)**2)
+		npar, ncov = curve_fit_patched(f, x, y, p0=par, sigma=dyeff, absolute_sigma=absolute_sigma, **kw)
+		error = abs(npar - par) / npar
+		cerror = abs(ncov - cov) / ncov
+		par = npar
+		cov = ncov
+		cycles += 1
+		if (error < conv_diff).all() and (cerror < conv_diff).all():
+			break
+	return par, cov, cycles
+
+def fit_generic_ev(f, x, y, dfdx=None, dx=None, dy=None, p0=None, absolute_sigma=True, conv_diff=1e-7, max_cycles=5, print_info=False, **kw):
 	"""
 	fit y = f(x, *params)
 	
@@ -137,15 +150,15 @@ def fit_generic_xyerr(f, dfdx, x, y, sigmax, sigmay, p0=None, print_info=False, 
 	----------
 	f : callable
 		the function to fit
-	dfdx : callable
-		derivative of f respect to x: dfdx(x, *params)
 	x : M-length array-like
 		independent data
 	y : M-length array-like
 		dependent data
-	sigmax : M-length array-like or None
+	dfdx : callable
+		derivative of f respect to x: dfdx(x, *params)
+	dx : M-length array-like or None
 		standard deviation of x
-	sigmay : M-length array-like or None
+	dy : M-length array-like or None
 		standard deviation of y
 	p0 : N-length sequence
 		initial guess for parameters
@@ -1103,7 +1116,7 @@ def num2si(x, format='%.15g', si=True, space=' '):
 	x3 = x / (10 ** exp3)
 	
 	if si and exp3 >= -24 and exp3 <= 24 and exp3 != 0:
-		exp3_text = 'yzafpnum kMGTPEZY'[(exp3 - (-24)) // 3]
+		exp3_text = 'yzafpnμm kMGTPEZY'[(exp3 - (-24)) // 3]
 	elif exp3 == 0:
 		exp3_text = ''
 	else:
