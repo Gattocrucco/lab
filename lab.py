@@ -951,6 +951,118 @@ def util_format(x, e, pm=None, percent=False, comexp=True):
 	pe = e / x * 100.0
 	return s + " (%.*g %%)" % (2 if pe < 100.0 else 3, pe)
 
+# this function taken from stackoverflow and modified
+# http://stackoverflow.com/questions/17973278/python-decimal-engineering-notation-for-mili-10e-3-and-micro-10e-6
+def num2si(x, format='%.15g', si=True, space=' '):
+	"""
+	Returns x formatted in a simplified engineering format -
+	using an exponent that is a multiple of 3.
+	
+	Parameters
+	----------
+	x : number
+		the number to format
+	format : string
+		printf-style string used to format the mantissa
+	si : boolean
+		if true, use SI suffix for exponent, e.g. k instead of e3, n instead of
+		e-9 etc. If the exponent would be greater than 24, numerical exponent is
+		used anyway.
+	space : string
+		string interposed between the mantissa and the exponent
+	
+	Returns
+	-------
+	fx : string
+		the formatted value
+	
+	Example
+	-------
+	     x     | num2si(x)
+	-----------|----------
+	   1.23e-8 |  12.3 n
+	       123 |  123
+	    1230.0 |  1.23 k
+	-1230000.0 |  -1.23 M
+	         0 |  0
+	
+	See also
+	--------
+	util_format, util_format_comp, xe, xep
+	"""
+	x = float(x)
+	if x == 0:
+		return format % x + space
+	exp = int(math.floor(math.log10(abs(x))))
+	exp3 = exp - (exp % 3)
+	x3 = x / (10 ** exp3)
+	
+	if si and exp3 >= -24 and exp3 <= 24 and exp3 != 0:
+		exp3_text = 'yzafpnμm kMGTPEZY'[(exp3 - (-24)) // 3]
+	elif exp3 == 0:
+		exp3_text = ''
+	else:
+		exp3_text = 'e%s' % exp3
+	
+	return (format + '%s%s') % (x3, space, exp3_text)
+
+subscr  = '₀₁₂₃₄₅₆₇₈₉₊₋ₑ․'
+subscrc = '0123456789+-e.'
+supscr  = '⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻ᵉ·'
+
+def _num2sub(x, format=None):
+	"""
+	Format a number as subscript.
+	
+	Parameters
+	----------
+	x : string or number
+		The number to format.
+	format : None or string
+		If None, x is interpreted as string and formatted subscript as-is.
+		If string, it is a %-format used to format x before converting to subscript.
+	
+	Returns
+	-------
+	s : string
+		x written in subscript.
+	"""
+	if format is None:
+		x = str(x)
+	else:
+		x = format % float(x)
+	for i in range(len(subscrc)):
+		x = x.replace(subscrc[i], subscr[i])
+	return x
+
+def _num2sup(x, format=None):
+	"""
+	Format a number as superscript.
+	
+	Parameters
+	----------
+	x : string or number
+		The number to format.
+	format : None or string
+		If None, x is interpreted as string and formatted superscript as-is.
+		If string, it is a %-format used to format x before converting to superscript.
+	
+	Returns
+	-------
+	s : string
+		x written in superscript.
+	"""
+	if format is None:
+		x = str(x)
+	else:
+		x = format % float(x)
+	for i in range(len(subscrc)):
+		x = x.replace(subscrc[i], supscr[i])
+	return x
+
+num2sub = np.vectorize(_num2sub, otypes=[str])
+num2sup = np.vectorize(_num2sup, otypes=[str])
+
 # ************************** TIME *********************************
 
 def util_timecomp(secs):
@@ -1068,61 +1180,6 @@ def etastr(eta, progress, mininterval=np.inf):
 		print('elapsed time: %s, remaining time: %s' % (timestr, etastr))
 		eta[1] = now
 	return timestr, etastr
-
-# this function taken from stackoverflow and modified
-# http://stackoverflow.com/questions/17973278/python-decimal-engineering-notation-for-mili-10e-3-and-micro-10e-6
-def num2si(x, format='%.15g', si=True, space=' '):
-	"""
-	Returns x formatted in a simplified engineering format -
-	using an exponent that is a multiple of 3.
-	
-	Parameters
-	----------
-	x : number
-		the number to format
-	format : string
-		printf-style string used to format the mantissa
-	si : boolean
-		if true, use SI suffix for exponent, e.g. k instead of e3, n instead of
-		e-9 etc. If the exponent would be greater than 24, numerical exponent is
-		used anyway.
-	space : string
-		string interposed between the mantissa and the exponent
-	
-	Returns
-	-------
-	fx : string
-		the formatted value
-	
-	Example
-	-------
-	     x     | num2si(x)
-	-----------|----------
-	   1.23e-8 |  12.3 n
-	       123 |  123
-	    1230.0 |  1.23 k
-	-1230000.0 |  -1.23 M
-	         0 |  0
-	
-	See also
-	--------
-	util_format, util_format_comp, xe, xep
-	"""
-	x = float(x)
-	if x == 0:
-		return format % x + space
-	exp = int(math.floor(math.log10(abs(x))))
-	exp3 = exp - (exp % 3)
-	x3 = x / (10 ** exp3)
-	
-	if si and exp3 >= -24 and exp3 <= 24 and exp3 != 0:
-		exp3_text = 'yzafpnμm kMGTPEZY'[(exp3 - (-24)) // 3]
-	elif exp3 == 0:
-		exp3_text = ''
-	else:
-		exp3_text = 'e%s' % exp3
-	
-	return (format + '%s%s') % (x3, space, exp3_text)
 
 # ************************ SHORTCUTS ******************************
 
