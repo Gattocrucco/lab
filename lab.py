@@ -97,18 +97,18 @@ def curve_fit_patched(f, xdata, ydata, p0=None, sigma=None, absolute_sigma=False
 
 def fit_norm_cov(cov):
 	"""
-		normalize a square matrix so that the diagonal is 1:
-		ncov[i,j] = cov[i,j] / sqrt(cov[i,i] * cov[j,j])
-	
-		Parameters
-		----------
-		cov : (N,N)-shaped array-like
-			the matrix to normalize
-	
-		Returns
-		-------
-		ncov : (N,N)-shaped array-like
-			the normalized matrix
+	normalize a square matrix so that the diagonal is 1:
+	ncov[i,j] = cov[i,j] / sqrt(cov[i,i] * cov[j,j])
+
+	Parameters
+	----------
+	cov : (N,N)-shaped array-like
+		the matrix to normalize
+
+	Returns
+	-------
+	ncov : (N,N)-shaped array-like
+		the normalized matrix
 	"""
 	ncov = np.copy(cov)
 	sigma = np.sqrt(np.diag(ncov))
@@ -169,6 +169,9 @@ def _fit_generic_odr(f, dfdx, dfdp, dfdpdx, x, y, dx, dy, p0):
 		return rt
 	par, cov, _, _, _ = leastsq(residual, p0, Dfun=jac, col_deriv=True, full_output=True)
 	return par, cov
+
+def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, dfdx=None, dfdp=None, dfdpdx=None, dataorder='par,axis,point', absolute_sigma=True, full_output=False, print_info=False):
+	return None
 
 def _fit_affine_odr(x, y, dx, dy):
 	dy2 = dy**2
