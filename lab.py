@@ -37,8 +37,7 @@ import os
 __all__ = [ # things imported when you do "from lab import *"
 	'curve_fit_patched',
 	'fit_norm_cov',
-	'fit_generic_xyerr2',
-	'fit_generic_xyerr3',
+	'fit_generic',
 	'fit_linear',
 	'fit_const_yerr',
 	'util_mm_er',
@@ -170,8 +169,56 @@ def _fit_generic_odr(f, dfdx, dfdp, dfdpdx, x, y, dx, dy, p0):
 	par, cov, _, _, _ = leastsq(residual, p0, Dfun=jac, col_deriv=True, full_output=True)
 	return par, cov
 
-def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, dfdx=None, dfdp=None, dfdpdx=None, dataorder='par,axis,point', absolute_sigma=True, full_output=False, print_info=False):
-	return None
+class FitOutput:
+
+	def chi2(self):
+		"""compute chisquare. How to in case of non-linearized odr without inverse?
+		in many cases an inverse could be given or built"""
+		pass
+
+class FitModel:
+	
+	def __init__(self, f, sym=True, dfdx=None, dfdp=None, dfdpdx=None, invf=None):
+		"""if sym=True, use sympy to obtain derivatives from f
+		or f is a scipy.odr.Model or a FitModel to copy"""
+		pass
+	
+	def implicit(self):
+		"""return True if the model is implicit (no y)"""
+		pass
+
+	def f(self):
+		"""return function"""
+		pass
+	
+	def f_pedantic(self):
+		pass
+	
+	def dfdx(self):
+		"""return dfdx function"""
+		pass
+	
+	def dfdx_pedantic(self):
+		"""return dfdx function with return format of scipy.odr's jacd"""
+		pass
+	
+	def dfdps(self):
+		"""return list of dfdp functions, one for each parameter"""
+		pass
+	
+	def dfdp_pedantic(self):
+		"""return dfdp function with return format of scipy.odr's jacb"""
+		pass
+	
+	def dfdp_pedantic_transpose(self):
+		pass
+	
+	def dfdpdxs(self):
+		pass
+
+def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True, dfdx=None, dfdp=None, dfdpdx=None, dataorder='par,axis,point', method='odrpack', full_output=False, print_info=False):
+	"""f may be either callable or FitModel"""
+	pass
 
 def _fit_affine_odr(x, y, dx, dy):
 	dy2 = dy**2
