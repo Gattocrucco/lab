@@ -6,6 +6,7 @@ import numpy as np
 import time
 from scipy import odr
 from scipy.optimize import curve_fit, leastsq
+import os
 
 # TODO
 #
@@ -955,8 +956,7 @@ def util_format(x, e, pm=None, percent=False, comexp=True):
 # http://stackoverflow.com/questions/17973278/python-decimal-engineering-notation-for-mili-10e-3-and-micro-10e-6
 def num2si(x, format='%.15g', si=True, space=' '):
 	"""
-	Returns x formatted in a simplified engineering format -
-	using an exponent that is a multiple of 3.
+	Returns x formatted using an exponent that is a multiple of 3.
 	
 	Parameters
 	----------
@@ -988,7 +988,7 @@ def num2si(x, format='%.15g', si=True, space=' '):
 	
 	See also
 	--------
-	util_format, util_format_comp, xe, xep
+	util_format, xe, xep
 	"""
 	x = float(x)
 	if x == 0:
@@ -1180,6 +1180,26 @@ def etastr(eta, progress, mininterval=np.inf):
 		print('elapsed time: %s, remaining time: %s' % (timestr, etastr))
 		eta[1] = now
 	return timestr, etastr
+
+# *************************** FILES *******************************
+
+def sanitizefilename(name, windows=True):
+	name = name.replace('/', '∕').replace('\0', '')
+	if windows:
+		name = name.replace('\\', '⧵').replace(':', '﹕')
+	return name
+
+def nextfilename(base, ext, idxfmt='%02d', prepath=None, start=1, sanitize=True):
+	if sanitize:
+		base = sanitizefilename(base)
+		ext = sanitizefilename(ext)
+	i = start
+	while True:
+		filename = ('%s%s-' + idxfmt + '%s') % (prepath + '/' if prepath != None else '', base, i, ext)
+		if not os.path.exists(filename):
+			break
+		i += 1
+	return filename
 
 # ************************ SHORTCUTS ******************************
 
