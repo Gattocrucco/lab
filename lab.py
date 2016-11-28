@@ -10,21 +10,12 @@ import os
 
 # TODO
 #
-# fit_*_odr
+# _fit_*_odr
 # vedere se c'è qualcosa di meglio di leastsq (es. least_squares?)
 #
 # util_format
 # opzione si=True per formattare come num2si
 # opzione errdig=(intero) per scegliere le cifre dell'errore
-#
-# fit_generic_xyerr
-# convertire in fit_generic_ev
-#
-# fit_generic_xyerr2
-# sostituire con fit_generic
-#
-# fit_generic_xyerr3
-# convertire in funzione low-level e wrapparla in fit_generic_odr (o si può aggiungere un parametro method='odr' a fit generic?)
 #
 # fit_generic (nuova funzione)
 # mangia anche le funzioni sympy calcolandone jacb e jacd, riconoscendo se può fare un fit analitico
@@ -133,7 +124,8 @@ def _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=True, conv_d
 			cycles = -1
 			break
 		dyeff = np.sqrt(dy**2 + (dfdx(x, *par) * dx)**2)
-		npar, ncov = curve_fit_patched(f, x, y, p0=par, sigma=dyeff, absolute_sigma=absolute_sigma, **kw)
+		rt = curve_fit_patched(f, x, y, p0=par, sigma=dyeff, absolute_sigma=absolute_sigma, **kw)
+		npar, ncov = rt[:2]
 		error = abs(npar - par) / npar
 		cerror = abs(ncov - cov) / ncov
 		par = npar
@@ -143,115 +135,7 @@ def _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=True, conv_d
 			break
 	return par, cov, cycles
 
-def fit_generic_ev(f, x, y, dfdx=None, dx=None, dy=None, p0=None, absolute_sigma=True, conv_diff=1e-7, max_cycles=5, print_info=False, **kw):
-	"""
-	fit y = f(x, *params)
-	
-	Parameters
-	----------
-	f : callable
-		the function to fit
-	x : M-length array-like
-		independent data
-	y : M-length array-like
-		dependent data
-	dfdx : callable
-		derivative of f respect to x: dfdx(x, *params)
-	dx : M-length array-like or None
-		standard deviation of x
-	dy : M-length array-like or None
-		standard deviation of y
-	p0 : N-length sequence
-		initial guess for parameters
-	print_info : bool
-		If True, print information about the fit
-	absolute_sigma : bool
-		If False, compute asymptotic errors, else standard errors for parameters
-	conv_diff : number
-		the difference in terms of standard deviation that
-		is considered sufficient for convergence; see notes
-	max_cycles : integer
-		the maximum number of fits done; see notes.
-		If this maximum is reached, an exception is raised.
-	
-	Keyword arguments are passed directly to curve_fit (see notes).
-	
-	Returns
-	-------
-	par : N-length array
-		optimal values for parameters
-	cov : (N,N)-shaped array
-		covariance matrix of par
-	
-	Notes
-	-----
-	Algorithm: run curve_fit once ignoring sigmax, then propagate sigmax using
-	dfdx and run curve_fit again with:
-		sigmay = sqrt(sigmay**2 + (propagated sigmax)**2)
-	until the differences between two successive estimates of the parameters are
-	less than conv_diff times the corresponding estimated errors.
-	"""
-	if sigmax is None:
-		return curve_fit_patched(f, x, y, p0=p0, sigma=sigmay, absolute_sigma=absolute_sigma, **kw)
-	x = np.asarray(x)
-	sigmax = np.asarray(sigmax)
-	if not (sigmay is None):
-		sigmay = np.asarray(sigmay)
-	cycles = 1
-	rt = curve_fit_patched(f, x, y, p0=p0, sigma=sigmay, absolute_sigma=absolute_sigma, **kw)
-	par, cov = rt[:2]
-	sigma = np.sqrt(np.diag(cov))
-	error = sigma # to pass loop condition
-	p0 = par
-	while any(error > sigma * conv_diff):
-		if cycles >= max_cycles:
-			raise RuntimeError("Maximum number of fit cycles %d reached" % max_cycles)
-		psigmax = dfdx(x, *p0) * sigmax
-		sigmayeff = psigmax if sigmay is None else np.sqrt(psigmax**2 + sigmay**2)
-		rt = curve_fit_patched(f, x, y, p0=p0, sigma=sigmayeff, absolute_sigma=absolute_sigma, **kw)
-		par, cov = rt[:2]
-		sigma = np.sqrt(np.diag(cov))
-		error = abs(par - p0)
-		p0 = par
-		cycles += 1
-	if print_info:
-		print(fit_generic_xyerr, ": cycles: %d" % (cycles))
-	return rt
-
-def fit_generic_xyerr2(f, dfdx, dfdp, x, y, sigmax, sigmay, p0=None, print_info=False):
-	"""
-		fit y = f(x, *params)
-		
-		Parameters
-		----------
-		f : callable
-			the function to fit
-		x : M-length array
-			independent data
-		y : M-length array
-			dependent data
-		sigmax : M-length array
-			standard deviation of x
-		sigmay : M-length array
-			standard deviation of y
-		p0 : N-length sequence
-			initial guess for parameters
-		print_info : bool, optional
-			If True, print information about the fit
-		absolute_sigma : bool, optional
-			If False, compute asymptotic errors, else standard errors for parameters
-		
-		Returns
-		-------
-		par : N-length array
-			optimal values for parameters
-		cov : (N,N)-shaped array
-			covariance matrix of par
-		
-		Notes
-		-----
-		This is a wrapper of scipy.odr
-	"""
+def _fit_generic_odrpack(f, dfdx, dfdp, x, y, sigmax, sigmay, p0=None, print_info=False):
 	def fcn(B, x):
 		return f(x, *B)
 	def fjacb(B, x):
@@ -268,7 +152,7 @@ def fit_generic_xyerr2(f, dfdx, dfdp, x, y, sigmax, sigmay, p0=None, print_info=
 		output.pprint()
 	return par, cov
 
-def fit_generic_xyerr3(f, dfdx, dfdp, dfdpdx, x, y, dx, dy, p0):
+def _fit_generic_odr(f, dfdx, dfdp, dfdpdx, x, y, dx, dy, p0):
 	dy2 = dy**2
 	dx2 = dx**2
 	def residual(p):
@@ -1006,11 +890,11 @@ def num2si(x, format='%.15g', si=True, space=' '):
 	
 	return (format + '%s%s') % (x3, space, exp3_text)
 
-subscr  = '₀₁₂₃₄₅₆₇₈₉₊₋ₑ․'
-subscrc = '0123456789+-e.'
-supscr  = '⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻ᵉ·'
+_subscr  = '₀₁₂₃₄₅₆₇₈₉₊₋ₑ․'
+_subscrc = '0123456789+-e.'
+_supscr  = '⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻ᵉ·'
 
-def _num2sub(x, format=None):
+def num2sub(x, format=None):
 	"""
 	Format a number as subscript.
 	
@@ -1031,11 +915,11 @@ def _num2sub(x, format=None):
 		x = str(x)
 	else:
 		x = format % float(x)
-	for i in range(len(subscrc)):
-		x = x.replace(subscrc[i], subscr[i])
+	for i in range(len(_subscrc)):
+		x = x.replace(_subscrc[i], _subscr[i])
 	return x
 
-def _num2sup(x, format=None):
+def num2sup(x, format=None):
 	"""
 	Format a number as superscript.
 	
@@ -1056,12 +940,9 @@ def _num2sup(x, format=None):
 		x = str(x)
 	else:
 		x = format % float(x)
-	for i in range(len(subscrc)):
-		x = x.replace(subscrc[i], supscr[i])
+	for i in range(len(_subscrc)):
+		x = x.replace(_subscrc[i], _supscr[i])
 	return x
-
-num2sub = np.vectorize(_num2sub, otypes=[str])
-num2sup = np.vectorize(_num2sup, otypes=[str])
 
 # ************************** TIME *********************************
 
@@ -1184,12 +1065,58 @@ def etastr(eta, progress, mininterval=np.inf):
 # *************************** FILES *******************************
 
 def sanitizefilename(name, windows=True):
+	"""
+	Removes characters not allowed by the filesystem, replacing
+	them with similar unicode characters.
+	
+	Parameters
+	----------
+	name : string
+		The file name to sanitize. It can not be a path, since slashes are
+		replaced.
+	windows : bool
+		If True, also replace characters not allowed in Windows.
+	
+	Return
+	------
+	filename : string
+		The sanitized file name.
+	"""
 	name = name.replace('/', '∕').replace('\0', '')
 	if windows:
 		name = name.replace('\\', '⧵').replace(':', '﹕')
 	return name
 
 def nextfilename(base, ext, idxfmt='%02d', prepath=None, start=1, sanitize=True):
+	"""
+	Consider the following format:
+		<base><index><ext>
+	This functions search for the pattern with the lowest index that is not
+	the path of an existing file.
+	
+	Parameters
+	----------
+	base : string
+		Tipically the name of the file, without extension.
+	ext : string
+		Tipically the file type extension (with dot).
+	idxfmt : string
+		The %-format used to format the index.
+	prepath : None or string
+		A path that is prepended to <base> with a slash:
+			<prepath>/<base>...
+	start : number
+		The index to start with.
+	sanitize : bool
+		If True, process <base> and <ext> with sanitizefilename. In this case,
+		<base> should not contain a path since slashes are replaced. Use
+		<prepath> instead.
+	
+	Returns
+	-------
+	filename : string
+		File name of non-existing file.
+	"""
 	if sanitize:
 		base = sanitizefilename(base)
 		ext = sanitizefilename(ext)
