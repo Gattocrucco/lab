@@ -7,6 +7,7 @@ import time
 from scipy import odr
 from scipy.optimize import curve_fit, leastsq
 import os
+import sympy
 
 # TODO
 #
@@ -151,7 +152,7 @@ def _fit_generic_odrpack(f, dfdx, dfdp, x, y, sigmax, sigmay, p0=None, print_inf
 		output.pprint()
 	return par, cov
 
-def _fit_generic_odr(f, dfdx, dfdp, dfdpdx, x, y, dx, dy, p0):
+def _fit_generic_odr(f, dfdx, dfdps, dfdpdxs, x, y, dx, dy, p0):
 	dy2 = dy**2
 	dx2 = dx**2
 	def residual(p):
@@ -161,10 +162,8 @@ def _fit_generic_odr(f, dfdx, dfdp, dfdpdx, x, y, dx, dy, p0):
 		rad = dy2 + dfdx(x, *p)**2 * dx2
 		srad = np.sqrt(rad)
 		res = (y - f(x, *p)) * dx2 * dfdx(x, *p) / srad
-		sdfdp = dfdp(x, *p)
-		sdfdpdx = dfdpdx(x, *p)
 		for i in range(len(p)):
-			rt[i] = - (sdfdp[i] * srad + sdfdpdx[i] * res) / rad
+			rt[i] = - (dfdps[i](x, *p) * srad + dfdpdxs[i](x, *p) * res) / rad
 		return rt
 	par, cov, _, _, _ = leastsq(residual, p0, Dfun=jac, col_deriv=True, full_output=True)
 	return par, cov
@@ -178,47 +177,109 @@ class FitOutput:
 
 class FitModel:
 	
-	def __init__(self, f, sym=True, dfdx=None, dfdp=None, dfdpdx=None, invf=None):
+	def __init__(self, f, sym=True, dfdx=None, dfdp=None, dfdpdx=None, invf=None, implicit=False):
 		"""if sym=True, use sympy to obtain derivatives from f
 		or f is a scipy.odr.Model or a FitModel to copy"""
-		pass
+		if sym:
+			args = inspect.getargspec(f).args
+			xsym = sympy.symbols('x', real=True)
+			psym = [sympy.symbols('p_%d' % i, real=True) for i in range(len(args) - 1)]
+			syms = [xsym] + psym
+			self._dfdx = sympy.lambdify(syms, f(*syms).diff(xsym), "numpy")
+			self._dfdps = [sympy.lambdify(syms, f(*syms).diff(p), "numpy") for p in psym]
+			self._dfdpdxs = [sympy.lambdify(syms, f(*syms).diff(xsym).diff(p), "numpy") for p in psym]
+			self._f = sympy.lambdify(syms, f(*syms), "numpy")
+			self._sym = True
+		else:
+			self._dfdx = dfdx
+			self._dfdp = dfdp
+			self._dfdpdx = dfdpdx
+			self._f = f
+			self._sym = False
 	
-	def implicit(self):
-		"""return True if the model is implicit (no y)"""
-		pass
-
+	# def implicit(self):
+	# 	"""return True if the model is implicit (no y)"""
+	# 	pass
+	#
 	def f(self):
 		"""return function"""
-		pass
+		return self._f
 	
-	def f_pedantic(self):
-		pass
+	def f_odrpack(self, length):
+		rt = np.empty(length)
+		def f_p(B, x):
+			rt = self._f(x, *B)
+			return rt
+		return f_p			
 	
 	def dfdx(self):
 		"""return dfdx function"""
-		pass
+		return self._dfdx
 	
-	def dfdx_pedantic(self):
+	def dfdx_odrpack(self, length):
 		"""return dfdx function with return format of scipy.odr's jacd"""
-		pass
+		rt = np.empty(length)
+		def f_p(B, x):
+			rt = self._dfdx(x, *B)
+			return rt
+		return f_p
 	
 	def dfdps(self):
 		"""return list of dfdp functions, one for each parameter"""
-		pass
+		return self._dfdps
 	
-	def dfdp_pedantic(self):
+	def dfdp_odrpack(self, length):
 		"""return dfdp function with return format of scipy.odr's jacb"""
-		pass
+		rt = np.empty((len(self._dfdps), length))
+		def f_p(B, x):
+			for i in range(len(self._dfdps)):
+				rt[i] = self._dfdps[i](x, *B)
+			return rt
+		return f_p
 	
-	def dfdp_pedantic_transpose(self):
-		pass
+	def dfdp_curve_fit(self):
+		rt = np.empty((len(self._dfdps), length))
+		def f_p(*args):
+			for i in range(len(self._dfdps)):
+				rt[i] = self._dfdps[i](*args)
+			return rt.T
+		return f_p
 	
 	def dfdpdxs(self):
-		pass
+		return self._dfdpdxs
 
-def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True, dfdx=None, dfdp=None, dfdpdx=None, dataorder='par,axis,point', method='odrpack', full_output=False, print_info=False):
+def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True, dataorder='par,axis,point', method='odrpack', full_output=False, print_info=False):
 	"""f may be either callable or FitModel"""
-	pass
+	
+	if isinstance(f, FitModel):
+		model = f
+	else:
+		model = FitModel(f)
+	
+	if method == 'odrpack':
+		fcn = model.f_odrpack(len(x))
+		fjacb = model.dfdp_odrpack(len(x))
+		fjacd = model.dfdx_odrpack(len(x))
+		M = odr.Model(fcn, fjacb=fjacb, fjacd=fjacd)
+		data = odr.RealData(x, y, sx=dx, sy=dy)
+		ODR = odr.ODR(data, M, beta0=p0)
+		output = ODR.run()
+		par = output.beta
+		cov = output.cov_beta
+		if print_info:
+			output.pprint()
+		
+	elif method == 'linodr':
+		f = model.f()
+		dfdps = model.dfdps()
+		dfdx = model.dfdx()
+		dfdpdxs = model.dfdpdxs()
+		par, cov = _fit_generic_odr(f, dfdx, dfdps, dfdpdxs, x, y, dx, dy, p0)
+	
+	elif method == 'ev':
+		pass
+	
+	return par, cov
 
 def _fit_affine_odr(x, y, dx, dy):
 	dy2 = dy**2
