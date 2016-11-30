@@ -894,7 +894,7 @@ def _format_epositive(x, e, errsep=True, minexp=3):
 		return sx, se, ex
 	return sx + '(' + ("%#.*g" % (n, e * 10 ** (n - nd(e))))[:n] + ')', '', ex
 
-def util_format(x, e, pm=None, percent=False, comexp=True):
+def util_format(x, e, pm=None, percent=False, comexp=True, nicexp=False):
 	"""
 	format a value with its uncertainty
 	
@@ -910,6 +910,8 @@ def util_format(x, e, pm=None, percent=False, comexp=True):
 		if True, also format the relative error as percentage
 	comexp : bool
 		if True, write the exponent once.
+	nicexp : bool
+		if True, format exponent like ×10¹²³
 	
 	Returns
 	-------
@@ -935,7 +937,12 @@ def util_format(x, e, pm=None, percent=False, comexp=True):
 	if not math.isfinite(x) or not math.isfinite(e) or e == 0:
 		return "%.3g %s %.3g" % (x, '+-', e)
 	sx, se, ex = _format_epositive(x, e, not (pm is None))
-	es = "e%+d" % ex if ex != 0 else ''
+	if ex == 0:
+		es = ''
+	elif nicexp:
+		es = "×10" + num2sup(ex, format='%d')
+	else:
+		es = "e%+d" % ex
 	if pm is None:
 		s = sx + es
 	elif comexp and es != '':
@@ -1275,7 +1282,7 @@ _util_format_vect = np.vectorize(util_format, otypes=[str])
 
 unicode_pm = u'±'
 
-def xe(x, e, pm=None, comexp=True):
+def xe(x, e, pm=None, comexp=True, nicexp=False):
 	"""
 	Vectorized version of util_format with percent=False,
 	see lab.util_format and numpy.vectorize.
@@ -1289,9 +1296,9 @@ def xe(x, e, pm=None, comexp=True):
 	--------
 	xep, num2si, util_format
 	"""
-	return _util_format_vect(x, e, pm, False, comexp)
+	return _util_format_vect(x, e, pm, False, comexp, nicexp)
 
-def xep(x, e, pm=None, comexp=True):
+def xep(x, e, pm=None, comexp=True, nicexp=False):
 	"""
 	Vectorized version of util_format with percent=True,
 	see lab.util_format and numpy.vectorize.
@@ -1305,4 +1312,4 @@ def xep(x, e, pm=None, comexp=True):
 	--------
 	xe, num2si, util_format
 	"""
-	return _util_format_vect(x, e, pm, True, comexp)
+	return _util_format_vect(x, e, pm, True, comexp, nicexp)
