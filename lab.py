@@ -312,7 +312,7 @@ def _fit_linear_odr(x, y, dx, dy):
 		return rt
 	p0, _ = _fit_affine_unif_err(x, y)
 	par, cov, _, _, _ = leastsq(residual, (p0[0],), Dfun=jac, col_deriv=True, full_output=True)
-	return np.array([par[0], [0]]), np.array([[cov[0,0], 0], [0, 0]])
+	return np.array([par[0], 0]), np.array([[cov[0,0], 0], [0, 0]])
 
 def _fit_affine_yerr(x, y, sigmay):
 	dy2 = sigmay ** 2
@@ -1000,13 +1000,13 @@ def num2si(x, format='%.15g', si=True, space=' '):
 	x3 = x / (10 ** exp3)
 	
 	if si and exp3 >= -24 and exp3 <= 24 and exp3 != 0:
-		exp3_text = 'yzafpnμm kMGTPEZY'[(exp3 - (-24)) // 3]
+		exp3_text = space + 'yzafpnμm kMGTPEZY'[(exp3 - (-24)) // 3]
 	elif exp3 == 0:
-		exp3_text = ''
+		exp3_text = space
 	else:
-		exp3_text = 'e%s' % exp3
+		exp3_text = 'e%s' % exp3 + space
 	
-	return (format + '%s%s') % (x3, space, exp3_text)
+	return (format + '%s') % (x3, exp3_text)
 
 _subscr  = '₀₁₂₃₄₅₆₇₈₉₊₋ₑ․'
 _subscrc = '0123456789+-e.'
