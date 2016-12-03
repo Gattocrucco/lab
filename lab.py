@@ -11,6 +11,9 @@ import sympy
 
 # TODO
 #
+# fit_concatenate
+# concatena modelli di fit per fittare simultaneamente condividendo parametri
+#
 # _fit_*_odr
 # vedere se c'è qualcosa di meglio di leastsq (es. least_squares?)
 #
@@ -36,21 +39,28 @@ import sympy
 # pfix = [0, 3, 5...] i parametri a questi indici vengono bloccati
 
 __all__ = [ # things imported when you do "from lab import *"
-	'curve_fit_patched',
 	'fit_norm_cov',
 	'fit_generic',
 	'fit_linear',
 	'fit_const_yerr',
 	'util_mm_er',
+	'mme',
 	'etastart',
 	'etastr',
 	'num2si',
-	'mme',
+	'num2sup',
+	'num2sub',
 	'unicode_pm',
 	'xe',
 	'xep',
 	'util_format'
 ]
+
+# __all__ += [ # things for backward compatibility
+# 	'curve_fit_patched',
+# 	'fit_generic_xyerr',
+# 	'fit_generic_xyerr2'
+# ]
 
 __version__ = '2016.11'
 
@@ -61,39 +71,43 @@ def _check_finite(array): # asarray_chkfinite is absent in old numpies
 		if not np.isfinite(x):
 			raise ValueError("array must not contain infs or NaNs")
 
-def curve_fit_patched(f, xdata, ydata, p0=None, sigma=None, absolute_sigma=False, check_finite=True, **kw):
-	"""
-		Same as curve_fit, but add absolute_sigma and check_finite if scipy is old.
-		If the keyword argument force_patch=True is given, the patch is used anyway.
-	"""
-	force_patch = kw.pop('force_patch', False)
+def _patch_curve_fit(force_patch=False):
 	args = inspect.getargspec(curve_fit).args
+	
 	if 'absolute_sigma' in args and 'check_finite' in args and not force_patch:
-		rt = curve_fit(f, xdata, ydata, p0, sigma, absolute_sigma, check_finite, **kw)
+		return curve_fit
+		
 	elif 'absolute_sigma' in args and not force_patch:
-		if check_finite:
-			_check_finite(xdata)
-			_check_finite(ydata)
-		rt = curve_fit(f, xdata, ydata, p0, sigma, absolute_sigma, **kw)
+		def curve_fit_patched(f, xdata, ydata, p0=None, sigma=None, absolute_sigma=False, check_finite=True, **kw):
+			if check_finite:
+				_check_finite(xdata)
+				_check_finite(ydata)
+			return curve_fit(f, xdata, ydata, p0, sigma, absolute_sigma, **kw)
+		return curve_fit_patched
+		
 	else: # the case check_finite yes and absolute_sigma no does not exist
-		myp0 = p0
-		if p0 is None: # we need p0 to implement absolute_sigma
-			args = inspect.getargspec(f).args
-			if len(args) < 2:
-				raise ValueError("Unable to determine number of fit parameters.")
-			myp0 = [1.0] * (len(args) - (2 if 'self' in args else 1))
-		if np.isscalar(myp0):
-			myp0 = np.array([myp0])
-		if check_finite:
-			_check_finite(xdata)
-			_check_finite(ydata)
-		rt = curve_fit(f, xdata, ydata, p0, sigma, **kw)
-		if absolute_sigma and len(ydata) > len(myp0): # invert the normalization done by curve_fit
-			popt = rt[0]
-			s_sq = sum(((np.asarray(ydata) - f(xdata, *popt)) / (np.asarray(sigma) if sigma != None else 1.0)) ** 2) / (len(ydata) - len(myp0))
-			pcov = rt[1] / s_sq
-			rt = np.concatenate(([popt, pcov], rt[2:]))
-	return rt
+		def curve_fit_patched(f, xdata, ydata, p0=None, sigma=None, absolute_sigma=False, check_finite=True, **kw):
+			myp0 = p0
+			if p0 is None: # we need p0 to implement absolute_sigma
+				args = inspect.getargspec(f).args
+				if len(args) < 2:
+					raise ValueError("Unable to determine number of fit parameters.")
+				myp0 = [1.0] * (len(args) - (2 if 'self' in args else 1))
+			if np.isscalar(myp0):
+				myp0 = np.array([myp0])
+			if check_finite:
+				_check_finite(xdata)
+				_check_finite(ydata)
+			rt = curve_fit(f, xdata, ydata, p0, sigma, **kw)
+			if absolute_sigma and len(ydata) > len(myp0): # invert the normalization done by curve_fit
+				popt = rt[0]
+				s_sq = sum(((np.asarray(ydata) - f(xdata, *popt)) / (np.asarray(sigma) if sigma != None else 1.0)) ** 2) / (len(ydata) - len(myp0))
+				pcov = rt[1] / s_sq
+				rt = np.concatenate(([popt, pcov], rt[2:]))
+			return rt
+		return curve_fit_patched
+
+curve_fit_patched = _patch_curve_fit()
 
 def fit_norm_cov(cov):
 	"""
@@ -135,23 +149,6 @@ def _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=True, conv_d
 			break
 	return par, cov, cycles
 
-def _fit_generic_odrpack(f, dfdx, dfdp, x, y, sigmax, sigmay, p0=None, print_info=False):
-	def fcn(B, x):
-		return f(x, *B)
-	def fjacb(B, x):
-		return dfdp(x, *B)
-	def fjacd(B, x):
-		return dfdx(x, *B)
-	model = odr.Model(fcn, fjacb=fjacb, fjacd=fjacd)
-	data = odr.RealData(x, y, sx=sigmax, sy=sigmay)
-	ODR = odr.ODR(data, model, beta0=p0)
-	output = ODR.run()
-	par = output.beta
-	cov = output.cov_beta
-	if print_info:
-		output.pprint()
-	return par, cov
-
 def _fit_generic_odr(f, dfdx, dfdps, dfdpdxs, x, y, dx, dy, p0):
 	dy2 = dy**2
 	dx2 = dx**2
@@ -159,9 +156,10 @@ def _fit_generic_odr(f, dfdx, dfdps, dfdpdxs, x, y, dx, dy, p0):
 		return (y - f(x, *p)) / np.sqrt(dy2 + dfdx(x, *p)**2 * dx2)
 	rt = np.empty((len(p0), len(x)))
 	def jac(p):
-		rad = dy2 + dfdx(x, *p)**2 * dx2
+		sdfdx = dfdx(x, *p)
+		rad = dy2 + sdfdx**2 * dx2
 		srad = np.sqrt(rad)
-		res = (y - f(x, *p)) * dx2 * dfdx(x, *p) / srad
+		res = (y - f(x, *p)) * dx2 * sdfdx / srad
 		for i in range(len(p)):
 			rt[i] = - (dfdps[i](x, *p) * srad + dfdpdxs[i](x, *p) * res) / rad
 		return rt
@@ -208,7 +206,7 @@ class FitModel:
 	def f_odrpack(self, length):
 		rt = np.empty(length)
 		def f_p(B, x):
-			rt = self._f(x, *B)
+			rt[:] = self._f(x, *B)
 			return rt
 		return f_p			
 	
@@ -220,7 +218,7 @@ class FitModel:
 		"""return dfdx function with return format of scipy.odr's jacd"""
 		rt = np.empty(length)
 		def f_p(B, x):
-			rt = self._dfdx(x, *B)
+			rt[:] = self._dfdx(x, *B)
 			return rt
 		return f_p
 	
@@ -237,7 +235,7 @@ class FitModel:
 			return rt
 		return f_p
 	
-	def dfdp_curve_fit(self):
+	def dfdp_curve_fit(self, length):
 		rt = np.empty((len(self._dfdps), length))
 		def f_p(*args):
 			for i in range(len(self._dfdps)):
@@ -248,7 +246,7 @@ class FitModel:
 	def dfdpdxs(self):
 		return self._dfdpdxs
 
-def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True, dataorder='par,axis,point', method='odrpack', full_output=False, print_info=False):
+def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True, dataorder='par,axis,point', method='odrpack', full_output=False, print_info=False, **kw):
 	"""f may be either callable or FitModel"""
 	
 	if isinstance(f, FitModel):
@@ -277,7 +275,17 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		par, cov = _fit_generic_odr(f, dfdx, dfdps, dfdpdxs, x, y, dx, dy, p0)
 	
 	elif method == 'ev':
-		pass
+		f = model.f()
+		dfdx = model.dfdx()
+		conv_diff = kw.pop('conv_diff', 1e-7)
+		max_cycles = kw.pop('max_cycles', 5)
+		par, cov = curve_fit_patched(f, x, y, p0=p0, absolute_sigma=absolute_sigma, **kw)
+		par, cov, cycles = _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, **kw)
+		if cycles == -1:
+			raise RuntimeError('Maximum number (%d) of fit cycles reached' % max_cycles)
+	
+	else:
+		raise KeyError(method)
 	
 	return par, cov
 
@@ -450,8 +458,7 @@ def fit_linear(x, y, dx=None, dy=None, offset=True, absolute_sigma=True, method=
 	method : string, one of 'odr', 'ev'
 		fit method to use when there are errors on both x and y.
 		'odr': use orthogonal distance regression
-		'ev': use effective variance (WARNING: biased, use if you know what you are
-		doing)
+		'ev': use effective variance
 	print_info : bool
 		If True, print information about the fit.
 	
@@ -857,6 +864,36 @@ def util_mm_esr2(x, metertype='lab3', unit='volt', what='error', sqerr=False):
 		raise ValueError('asking internal resistance of ohmmeter')
 	return _util_mm_esr2_what[what](x, metertype, unit, sqerr)
 
+def mme(x, unit, metertype='lab3', sqerr=False):
+	"""
+	determines the fullscale used to measure x with a multimeter,
+	supposing the lowest possible fullscale was used, and returns the
+	uncertainty of the measurement.
+	
+	Parameters
+	----------
+	x : (X-shaped array of) number 
+		the value measured, may be negative
+	unit : (X-shaped array of) string
+		one of 'volt', 'volt_ac', 'ampere' 'ampere_ac', 'ohm', 'farad'
+		the unit of measure of x
+	metertype : (X-shaped array of) string
+		one of the names returned by util_mm_list()
+		the multimeter used
+	sqerr : bool
+		If True, sum errors squaring.
+	
+	Returns
+	-------
+	e : (X-shaped array of) number
+		the uncertainty
+	
+	See also
+	--------
+	util_mm_er, util_mm_esr, util_mm_esr2
+	"""
+	return util_mm_esr2(x, metertype=metertype, unit=unit, what='error', sqerr=sqerr)
+
 # *********************** FORMATTING *************************
 
 d = lambda x, n: int(("%.*e" % (n - 1, abs(x)))[0])
@@ -953,6 +990,42 @@ def util_format(x, e, pm=None, percent=False, comexp=True, nicexp=False):
 		return s
 	pe = e / x * 100.0
 	return s + " (%.*g %%)" % (2 if pe < 100.0 else 3, pe)
+
+_util_format_vect = np.vectorize(util_format, otypes=[str])
+
+def xe(x, e, pm=None, comexp=True, nicexp=False):
+	"""
+	Vectorized version of util_format with percent=False,
+	see lab.util_format and numpy.vectorize.
+	
+	Example
+	-------
+	xe(['1e7', 2e7], 33e4) --> ['1.00(3)e+7', '2.00(3)e+7']
+	xe(10, 0.8, pm=unicode_pm) --> '10.0 ± 0.8'
+	
+	See also
+	--------
+	xep, num2si, util_format
+	"""
+	return _util_format_vect(x, e, pm, False, comexp, nicexp)
+
+def xep(x, e, pm=None, comexp=True, nicexp=False):
+	"""
+	Vectorized version of util_format with percent=True,
+	see lab.util_format and numpy.vectorize.
+	
+	Example
+	-------
+	xep(['1e7', 2e7], 33e4) --> ['1.00(3)e+7 (3.3 %)', '2.00(3)e+7 (1.7 %)']
+	xep(10, 0.8, pm=unicode_pm) --> '10.0 ± 0.8 (8 %)'
+	
+	See also
+	--------
+	xe, num2si, util_format
+	"""
+	return _util_format_vect(x, e, pm, True, comexp, nicexp)
+
+unicode_pm = u'±'
 
 # this function taken from stackoverflow and modified
 # http://stackoverflow.com/questions/17973278/python-decimal-engineering-notation-for-mili-10e-3-and-micro-10e-6
@@ -1246,70 +1319,18 @@ def nextfilename(base, ext, idxfmt='%02d', prepath=None, start=1, sanitize=True)
 		i += 1
 	return filename
 
-# ************************ SHORTCUTS ******************************
+# ************************ COMPATIBILITY ****************************
 
-def mme(x, unit, metertype='lab3', sqerr=False):
+def fit_generic_xyerr(f, dfdx, x, y, sigmax, sigmay, p0=None, print_info=False, absolute_sigma=True, conv_diff=0.001, max_cycles=5, **kw):
 	"""
-	determines the fullscale used to measure x with a multimeter,
-	supposing the lowest possible fullscale was used, and returns the
-	uncertainty of the measurement.
-	
-	Parameters
-	----------
-	x : (X-shaped array of) number 
-		the value measured, may be negative
-	unit : (X-shaped array of) string
-		one of 'volt', 'volt_ac', 'ampere' 'ampere_ac', 'ohm', 'farad'
-		the unit of measure of x
-	metertype : (X-shaped array of) string
-		one of the names returned by util_mm_list()
-		the multimeter used
-	sqerr : bool
-		If True, sum errors squaring.
-	
-	Returns
-	-------
-	e : (X-shaped array of) number
-		the uncertainty
-	
-	See also
-	--------
-	util_mm_er, util_mm_esr, util_mm_esr2
+	THIS FUNCTION IS DEPRECATED AND PROVIDED FOR COMPATIBILITY ONLY
 	"""
-	return util_mm_esr2(x, metertype=metertype, unit=unit, what='error', sqerr=sqerr)
+	model = FitModel(f, dfdx=dfdx, sym=False)
+	return fit_generic(model, x, y, dx=sigmax, dy=sigmay, p0=p0, absolute_sigma=absolute_sigma, print_info=print_info, method='ev', conv_diff=conv_diff, max_cycles=max_cycles, **kw)
 
-_util_format_vect = np.vectorize(util_format, otypes=[str])
-
-unicode_pm = u'±'
-
-def xe(x, e, pm=None, comexp=True, nicexp=False):
+def fit_generic_xyerr2(f, x, y, sigmax, sigmay, p0=None, print_info=False, absolute_sigma=True):
 	"""
-	Vectorized version of util_format with percent=False,
-	see lab.util_format and numpy.vectorize.
-	
-	Example
-	-------
-	xe(['1e7', 2e7], 33e4) --> ['1.00(3)e+7', '2.00(3)e+7']
-	xe(10, 0.8, pm=unicode_pm) --> '10.0 ± 0.8'
-	
-	See also
-	--------
-	xep, num2si, util_format
+	THIS FUNCTION IS DEPRECATED AND PROVIDED FOR COMPATIBILITY ONLY
 	"""
-	return _util_format_vect(x, e, pm, False, comexp, nicexp)
-
-def xep(x, e, pm=None, comexp=True, nicexp=False):
-	"""
-	Vectorized version of util_format with percent=True,
-	see lab.util_format and numpy.vectorize.
-	
-	Example
-	-------
-	xep(['1e7', 2e7], 33e4) --> ['1.00(3)e+7 (3.3 %)', '2.00(3)e+7 (1.7 %)']
-	xep(10, 0.8, pm=unicode_pm) --> '10.0 ± 0.8 (8 %)'
-	
-	See also
-	--------
-	xe, num2si, util_format
-	"""
-	return _util_format_vect(x, e, pm, True, comexp, nicexp)
+	model = FitModel(f, sym=False)
+	return fit_generic(model, x, y, dx=sigmax, dy=sigmay, p0=p0, absolute_sigma=absolute_sigma, print_info=print_info, method='odrpack')
