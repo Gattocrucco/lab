@@ -10,17 +10,18 @@ from scipy.optimize import curve_fit
 import os
 
 #### PARAMETERS ####
+
 showplot = True # show plot after monte carlo run with fixed parameters
 showpsplot = False # show parameter biases with fixed data
 showpsdtplot = False # show parameter vs. errors
 stattest = False # perform statistical test after monte carlo
-weightedaverage = True
+
 p0s = [ # true parameters, axis 0 = parameter, axis 1 = values
 	# linspace(-1,1,10),
 	# logspace(0,1,10),
 	[1],
 	[1],
-	[1]
+	[1],
 ]
 fs = [ # sympy functions
 	lambda x, a, b: a * sp.exp(x / b),
@@ -29,8 +30,9 @@ fs = [ # sympy functions
 	lambda t, A, w, phi: A * sp.sin(w * t + phi)
 ]
 f = fs[3] # function to fit
+
 mcn = 1000 # number of repetitions (monte carlo)
-fitfun = 'odr' # ev, odr, odrpack, curve_fit, hoch
+fitfun = 'odrpack' # ev, odr, odrpack, curve_fit, hoch
 xmean = linspace(0, 10, 100) # true x
 n = len(xmean) # number of points
 dys = outer([1], ones(n)*.1) # errors, axis 0 = dataset, axis 1 = point
@@ -47,21 +49,6 @@ flatex = sp.latex(f(*syms))
 psubsym = [sp.Symbol('p%s' % lab.num2sub(i), real=True) for i in range(len(p0s))]
 fstr = str(f(xsym, *psubsym)).replace('**', '^').replace('*', '·')
 
-# compute derivatives and lambdify
-# dfdx = sp.lambdify(syms, f(*syms).diff(xsym), "numpy")
-# dfdps = [sp.lambdify(syms, f(*syms).diff(psym[i]), "numpy") for i in range(len(psym))]
-# dfdp_rt = empty((len(p0s), len(xmean)))
-# def dfdp(x, *p):
-# 	for i in range(len(p)):
-# 		dfdp_rt[i] = dfdps[i](x, *p)
-# 	return dfdp_rt
-# dfdpdxs = [sp.lambdify(syms, f(*syms).diff(xsym).diff(psym[i]), "numpy") for i in range(len(psym))]
-# dfdpdx_rt = empty((len(p0s), len(xmean)))
-# def dfdpdx(x, *p):
-# 	for i in range(len(p)):
-# 		dfdpdx_rt[i] = dfdpdxs[i](x, *p)
-# 	return dfdpdx_rt
-
 model = lab.FitModel(f)
 
 fsym = f
@@ -76,6 +63,15 @@ pars = empty((mcn, len(p0s))) # parameters from 1 MC run
 covs = empty((mcn, len(p0s), len(p0s))) # covariance matrices from 1 MC run
 times = empty(mcn) # execution times from 1 MC run
 
+def plot_text(string, loc=2, **kw):
+	locs = [
+		[],
+		[.95, .95, 'right', 'top'],
+		[.05, .95, 'left', 'top']
+	]
+	loc = locs[loc]
+	text(loc[0], loc[1], string, horizontalalignment=loc[2], verticalalignment=loc[3], transform=gca().transAxes, **kw)
+			
 eta = lab.etastart()
 for ll in range(len(dys)):
 	dy = dys[ll]
@@ -128,96 +124,78 @@ for ll in range(len(dys)):
 				covs[i] = cov
 			
 			# save results
-			if weightedaverage:
-				icovs = empty(covs.shape)
-				for i in range(len(icovs)):
-					icovs[i] = np.linalg.inv(covs[i])
-				pc = np.linalg.inv(icovs.sum(axis=0))
-				wpar = empty(pars.shape)
-				for i in range(len(wpar)):
-					wpar[i] = icovs[i].dot(pars[i])
-				pm = pc.dot(wpar.sum(axis=0))
-				pc *= len(pars)
-				ps = sqrt(diag(pc))
-			else:
-				pm = pars.mean(axis=0)
-				pc = empty(2 * [len(p0)])
-				for i in range(len(p0)):
-					for j in range(len(p0)):
-						pc[i, j] = ((pars[:,i] - pm[i]) * (pars[:,j] - pm[j])).sum() / len(pars)
-				ps = sqrt(diag(pc))
+			icovs = empty(covs.shape)
+			for i in range(len(icovs)):
+				icovs[i] = np.linalg.inv(covs[i])
+			pc = np.linalg.inv(icovs.sum(axis=0))
+			wpar = empty(pars.shape)
+			for i in range(len(wpar)):
+				wpar[i] = icovs[i].dot(pars[i])
+			pm = pc.dot(wpar.sum(axis=0))
+			ps = sqrt(diag(pc))
 
 			fp[(l, ll) + K] = pm
-			cp[(l, ll) + K] = pc / len(pars)
+			cp[(l, ll) + K] = pc
 			
 			if stattest or showplot:
 				
-				fs = array([sqrt(covs[:,i,i]).mean() for i in range(len(p0))])
-				fss = array([sqrt(covs[:,i,i]).std(ddof=1) for i in range(len(p0))])
-				fc, frho, prho, srho = empty([4] + 2 * [len(p0)])
-				for i in range(len(p0)):
-					for j in range(len(p0)):
-						fc[i,j] = covs[:,i,j].mean()
-						frho[i,j] = (covs[:,i,j] / sqrt(covs[:,i,i] * covs[:,j,j])).mean()
-						prho[i,j] = pc[i,j] / sqrt(pc[i,i] * pc[j,j])
-						srho[i,j] = (covs[:,i,j] / sqrt(covs[:,i,i] * covs[:,j,j])).std(ddof=1)
-				srho += eye(len(p0))
+				prho = pc / outer(ps, ps)
 
 				pdist = (pm - array(p0)) / ps
-				sdist = (fs - ps) / fss
-				rhodist = (frho - prho) / srho
-				chidist = (chisq.mean() - (n-len(p0))) / chisq.std(ddof=1)
-				print(pdist, chidist)
+				pdistc = (outer(pm - array(p0), pm - array(p0)) - pc) / sqrt(pc**2 + outer(ps, ps)**2)
+				chidist = (chisq.mean() - (n-len(p0))) / chisq.std(ddof=1) * sqrt(len(chisq))
 				
 				pvalue = st.kstest(chisq, 'chi2', (n-len(p0),))[1]
 				
-				print(pvalue)
-			
-			def plot_text(string, loc=2, **kw):
-				locs = [
-					[],
-					[.95, .95, 'right', 'top'],
-					[.05, .95, 'left', 'top']
-				]
-				loc = locs[loc]
-				text(loc[0], loc[1], string, horizontalalignment=loc[2], verticalalignment=loc[3], transform=gca().transAxes, **kw)
+				print(pdist, chidist, pvalue)
 			
 			if showplot:
 				
-				figure('Function %s, fit with method “%s”' % (fstr, fitfun), figsize=(14,10)).set_tight_layout(True)
-				clf()
 				maxscatter = 1000
 				histkw = dict(
 					bins=int(sqrt(min(mcn, 1000))),
 					color=(.9,.9,.9),
 					edgecolor=(.7, .7, .7)
 				)
-				rows = max(1 + len(p0), 3)
-				cols = 1 + len(p0)
+				if len(p0) == 1:
+					rows = 2
+					cols = 2
+				elif len(p0) == 2:
+					rows = 3
+					cols = 3
+				else:
+					rows = 1 + len(p0)
+					cols = len(p0)
 				
-				# histogram of parameter; left column
-				for i in range(len(p0)):
-					subplot(rows, cols, 1 + i * cols)
-					title('$p_%d\'-p_%d$' % (i, i))
-					plot_text('True $p_%d = $%g\nDistance = %.2g $\sigma$ (%.2g %%)\nMean distance = %.2g $\sigma$' % (i, p0[i], pdist[i], 100*(pm - array(p0))[i], pdist[i] * sqrt(len(pars))))
-					hist(pars[:,i] - p0[i], **histkw)
-					ticklabel_format(style='sci', axis='x', scilimits=(-3,3))
+				figure('Function %s, fit with method “%s”' % (fstr, fitfun), figsize=(5*cols,3*rows)).set_tight_layout(True)
+				clf()
 				
-				# histogram of sigma; diagonal
-				for i in range(len(p0)):
-					subplot(rows, cols, 2 + i * (1 + cols))
-					title('$\sigma_%d\' - \sigma_%d$' % (i, i))
-					plot_text('True $\sigma = $%.2g\nDistance = %.2g $\sigma$ (%.2g %%)\nMean distance = %.2g $\sigma$' % (ps[i], sdist[i], 100*(fs[i] - ps[i]) / ps[i], sdist[i] * sqrt(len(pars))))
-					hist(sqrt(covs[:,i,i]) - ps[i], **histkw)
+				# histogram of parameter; diagonal
+				for i in range(len(p0)):					
+					subplot(rows, cols, 1 + i * (1 + cols))
+					title("$(p_{%d}'-{p}_{%d})/\sigma_{%d}$" % (i, i, i))
+					S = (pars[:,i] - p0[i]) / sqrt(covs[:,i,i])
+					hist(S, **histkw)
+					plot_text("$p_%d = $%g\n$\\bar{p}_{%d}-p_{%d} = $%.2g $\\bar{\sigma}_{%d}$" % (i, p0[i], i, i, pdist[i], i))
 					ticklabel_format(style='sci', axis='x', scilimits=(-3,3))
+					
+				# histogram of covariance; lower triangle
+				for i in range(len(p0)):
+					for j in range(i):
+						subplot(rows, cols, 1 + i * cols + j)
+						title("$((p_{%d}'-p_{%d})\cdot(p_{%d}'-p_{%d})-\sigma_{%d%d})/\sqrt{\sigma_{%d%d}^2+\sigma_{%d}^2\sigma_{%d}^2}$" % (i, i, j, j, i, j, i, j, i, j))
+						C = ((pars[:,i] - p0[i]) * (pars[:,j] - p0[j]) - covs[:,i,j]) / sqrt(covs[:,i,j]**2 + covs[:,i,i]*covs[:,j,j])
+						hist(C, **histkw)
+						plot_text("$\\bar{\\rho}_{%d%d} = $%.2g\n$(\\bar{p}_{%d}-p_{%d})\cdot(\\bar{p}_{%d}-p_{%d})-\\bar{\sigma}_{%d%d} = $%.2g $\sqrt{\\bar{\sigma}_{%d%d}^2+\\bar{\sigma}_{%d}^2\\bar{\sigma}_{%d}^2}$" % (i, j, prho[i,j], i, i, j, j, i, j, pdistc[i,j], i, j, i, j))
+						ticklabel_format(style='sci', axis='x', scilimits=(-3,3))
 				
 				# scatter plot of pairs of parameters; upper triangle
 				for i in range(len(p0)):
 					for j in range(i + 1, len(p0)):
-						subplot(rows, cols, 2 + i * cols + j)
-						title('$(p_%d\',p_%d\')-(p_%d,p_%d)$' % (i, j, i, j))
-						X = pars[:, i] - p0[i]
-						Y = pars[:, j] - p0[j]
+						subplot(rows, cols, 1 + i * cols + j)
+						title("$(p_{%d}'-p_{%d})/\sigma_{%d}$, $(p_{%d}'-p_{%d})/\sigma_{%d}$" % (i, i, i, j, j, j))
+						X = (pars[:, i] - p0[i]) / sqrt(covs[:,i,i])
+						Y = (pars[:, j] - p0[j]) / sqrt(covs[:,j,j])
 						if len(X) > maxscatter:
 							X = X[::int(ceil(len(X) / maxscatter))]
 							Y = Y[::int(ceil(len(Y) / maxscatter))]
@@ -225,40 +203,31 @@ for ll in range(len(dys)):
 						grid()
 						ticklabel_format(style='sci', axis='both', scilimits=(-3,3))
 				
-				# histogram of correlation; lower triangle
-				for i in range(len(p0)):
-					for j in range(i):
-						subplot(rows, cols, 2 + i * cols + j)
-						title('$\\rho_{%d%d}\'-\\rho_{%d%d}$' % (i, j, i, j))
-						plot_text('True $\\rho =$ %.2g\nDistance = %.2g $\sigma$ (%.2g %%)\nMean distance = %.2g $\sigma$' % (prho[i,j], rhodist[i,j], 100*(frho[i,j] - prho[i,j]) / prho[i,j], rhodist[i,j] * sqrt(len(pars))))
-						hist(covs[:,i,j] / sqrt(covs[:,i,i]*covs[:,j,j]) - prho[i,j], **histkw)
-						ticklabel_format(style='sci', axis='x', scilimits=(-3,3))
-				
 				# histogram of chisquare; last row column 1
-				subplot(rows, cols, len(p0) * cols + 1)
+				subplot(rows, cols, 1 + cols * (rows - 1))
 				title('$\chi^2$')
-				plot_text('KSTest p-value = %.2g %%\nTrue dof = %d\nDistance = %.2g $\sigma$' % (100*pvalue, n-len(p0), chidist), loc=1)
+				plot_text('K.S. test p-value = %.2g %%\n$\mathrm{dof}=n-{\#}p = $%d\n$N\cdot(\\bar{\chi}^2 - \mathrm{dof}) = $%.2g $\sqrt{2\cdot\mathrm{dof}}$' % (100*pvalue, n-len(p0), chidist), loc=1)
 				hist(chisq, **histkw)
-				
+
 				# histogram of execution time; last row column 2
-				subplot(rows, cols, len(p0) * cols + 2)
+				subplot(rows, cols, 2 + cols * (rows - 1))
 				title('time [ms]')
 				plot_text('Average time = %.2g ms' % (1000*times.mean()), loc=1)
 				hist(times*1000, **histkw)
-				
-				# example data; last row last column
-				subplot(rows, cols, rows * cols)
+
+				# example data; last row column 3 (or first row last column)
+				subplot(rows, cols, (3 + cols * (rows - 1)) if len(p0) >= 2 else cols)
 				title('Example fit')
 				fx = linspace(min(xmean), max(xmean), 1000)
-				plot(fx, f(fx, *p0), 'r-', linewidth=3, label='$y=%s$' % flatex)
-				errorbar(x, y, dy, dx, fmt=',k', capsize=0, label='Data')
-				plot(fx, f(fx, *par), 'g--', linewidth=2, label='Fit')
+				plot(fx, f(fx, *p0), '-', color='lightgray', linewidth=5, label='$y=%s$' % flatex, zorder=1)
+				errorbar(x, y, dy, dx, fmt=',k', capsize=0, label='Data', zorder=2)
+				plot(fx, f(fx, *par), 'r-', linewidth=1, label='Fit', zorder=3, alpha=1)
 				# plot_text('$y=%s$\n$y=%s$' % (flatex, sp.latex(fsym(xsym, *p0))), fontsize=20)
 				ticklabel_format(style='sci', axis='both', scilimits=(-3,3))
 				legend(loc=0, fontsize='small')
 				
 				# save figure and show
-				savefig(lab.nextfilename(gcf().canvas.get_window_title(), '.pdf'))
+				savefig(lab.nextfilename(gcf().canvas.get_window_title(), '.pdf', prepath='Figures'))
 				show()
 
 if showpsplot:
@@ -281,7 +250,7 @@ if showpsplot:
 			ticklabel_format(style='sci', axis='both', scilimits=(-3,3))
 			grid()
 				
-	savefig(lab.nextfilename(gcf().canvas.get_window_title(), '.pdf'))
+	savefig(lab.nextfilename(gcf().canvas.get_window_title(), '.pdf', prepath='Figures'))
 	show()
 	# figure('Slope 3d, fit with method “%s”' % fitfun).set_tight_layout(True)
 	# clf()
@@ -321,5 +290,5 @@ if showpsdtplot:
 			pvalue = st.chi2.sf(sum((Y / DY)**2), len(Y))
 			plot_text('p-value = %.2g %%' % (pvalue * 100), loc=1)
 		
-	savefig(lab.nextfilename(gcf().canvas.get_window_title(), '.pdf'))
+	savefig(lab.nextfilename(gcf().canvas.get_window_title(), '.pdf', prepath='Figures'))
 	show()
