@@ -20,6 +20,7 @@ import sympy
 # util_format
 # opzione si=True per formattare come num2si
 # opzione errdig=(intero) per scegliere le cifre dell'errore
+# usare lo standard di arrotondamento del PDG
 #
 # fit_generic (nuova funzione)
 # mangia anche le funzioni sympy calcolandone jacb e jacd, riconoscendo se può fare un fit analitico
@@ -44,6 +45,7 @@ __all__ = [ # things imported when you do "from lab import *"
 	'fit_linear',
 	'fit_const_yerr',
 	'util_mm_er',
+	'util_mm_list',
 	'mme',
 	'etastart',
 	'etastr',
@@ -246,7 +248,7 @@ class FitModel:
 	def dfdpdxs(self):
 		return self._dfdpdxs
 
-def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True, dataorder='par,axis,point', method='odrpack', full_output=False, print_info=False, **kw):
+def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True, method='odrpack', full_output=False, print_info=False, **kw):
 	"""f may be either callable or FitModel"""
 	
 	if isinstance(f, FitModel):
@@ -264,6 +266,9 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		output = ODR.run()
 		par = output.beta
 		cov = output.cov_beta
+		if not absolute_sigma:
+			chisq = ((output.eps / dy)**2 + (output.delta / dx)**2).sum() / (len(x) - len(par))
+			cov *= chisq
 		if print_info:
 			output.pprint()
 		
@@ -1313,7 +1318,7 @@ def nextfilename(base, ext, idxfmt='%02d', prepath=None, start=1, sanitize=True)
 		ext = sanitizefilename(ext)
 	i = start
 	while True:
-		filename = ('%s%s-' + idxfmt + '%s') % (prepath + '/' if prepath != None else '', base, i, ext)
+		filename = ('%s%s-' + idxfmt + '%s') % ((prepath + '/') if prepath != None else '', base, i, ext)
 		if not os.path.exists(filename):
 			break
 		i += 1
@@ -1323,14 +1328,14 @@ def nextfilename(base, ext, idxfmt='%02d', prepath=None, start=1, sanitize=True)
 
 def fit_generic_xyerr(f, dfdx, x, y, sigmax, sigmay, p0=None, print_info=False, absolute_sigma=True, conv_diff=0.001, max_cycles=5, **kw):
 	"""
-	THIS FUNCTION IS DEPRECATED AND PROVIDED FOR COMPATIBILITY ONLY
+	THIS FUNCTION IS DEPRECATED
 	"""
 	model = FitModel(f, dfdx=dfdx, sym=False)
 	return fit_generic(model, x, y, dx=sigmax, dy=sigmay, p0=p0, absolute_sigma=absolute_sigma, print_info=print_info, method='ev', conv_diff=conv_diff, max_cycles=max_cycles, **kw)
 
 def fit_generic_xyerr2(f, x, y, sigmax, sigmay, p0=None, print_info=False, absolute_sigma=True):
 	"""
-	THIS FUNCTION IS DEPRECATED AND PROVIDED FOR COMPATIBILITY ONLY
+	THIS FUNCTION IS DEPRECATED
 	"""
 	model = FitModel(f, sym=False)
 	return fit_generic(model, x, y, dx=sigmax, dy=sigmay, p0=p0, absolute_sigma=absolute_sigma, print_info=print_info, method='odrpack')
