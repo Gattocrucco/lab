@@ -247,7 +247,7 @@ class DataHolder(object):
 				argnames = inspect.getargspec(f).args[1:]
 				for name, par, err in zip(argnames, pars, f.sigmas):
 					print("{0} = {1:.4f} \pm {2:.4f}".format(name, par, err))
-				tell_chi2(f.resd, np.alen(x) - len(pars), style='latex')
+				print(tell_chi2(f.resd, np.alen(x) - len(pars), style='latex'))
 				print("")
 			if verbose:
 				print("{} completo\n\n".format(self.name))
@@ -283,11 +283,11 @@ class DataHolder(object):
 			self.pts = np.linspace(low, high, num=max(len(self.x.val)*10, 200))
 
 	def _graph_setup(self, resid=False):
-		if not self.x.lims:
+		if self.x.lims is None:
 			self._set_edges('x')
-		if not self.y.lims:
+		if self.y.lims is None:
 			self._set_edges('y')
-		if not self.pts:
+		if self.pts is None:
 			self._getpts()
 		if not resid:
 			main_ax = self.fig.add_subplot(1, 1, 1)
