@@ -290,13 +290,13 @@ class DataHolder(object):
 		if not self.pts:
 			self._getpts()
 		if not resid:
-			main_ax = self.fig_obj.add_subplot(1, 1, 1)
+			main_ax = self.fig.add_subplot(1, 1, 1)
 			main_ax.set_xlabel(self.x.label)
 			resid = ()
 		else:
 			sub_gs = mpl.gridspec.GridSpec(5, 1)		# TODO: make better
-			main_ax = self.fig_obj.add_subplot(sub_gs[:4])
-			resd_ax = self.fig_obj.add_subplot(sub_gs[4:])
+			main_ax = self.fig.add_subplot(sub_gs[:4])
+			resd_ax = self.fig.add_subplot(sub_gs[4:])
 			resd_ax.axhline(y=0, color='black')
 			resd_ax.set_xlabel(self.x.label)
 			resd_ax.set_xscale(self.x.type)
