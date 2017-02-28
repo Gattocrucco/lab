@@ -75,10 +75,10 @@ def _check_finite(array): # asarray_chkfinite is absent in old numpies
 
 def _patch_curve_fit(force_patch=False):
 	args = inspect.getargspec(curve_fit).args
-	
+
 	if 'absolute_sigma' in args and 'check_finite' in args and not force_patch:
 		return curve_fit
-		
+
 	elif 'absolute_sigma' in args and not force_patch:
 		def curve_fit_patched(f, xdata, ydata, p0=None, sigma=None, absolute_sigma=False, check_finite=True, **kw):
 			if check_finite:
@@ -86,7 +86,7 @@ def _patch_curve_fit(force_patch=False):
 				_check_finite(ydata)
 			return curve_fit(f, xdata, ydata, p0, sigma, absolute_sigma, **kw)
 		return curve_fit_patched
-		
+
 	else: # the case check_finite yes and absolute_sigma no does not exist
 		def curve_fit_patched(f, xdata, ydata, p0=None, sigma=None, absolute_sigma=False, check_finite=True, **kw):
 			myp0 = p0
@@ -126,12 +126,8 @@ def fit_norm_cov(cov):
 	ncov : (N,N)-shaped array-like
 		the normalized matrix
 	"""
-	ncov = np.copy(cov)
-	sigma = np.sqrt(np.diag(ncov))
-	for i in range(len(ncov)):
-		for j in range(len(ncov)):
-			ncov[i,j] /= sigma[i]*sigma[j]
-	return ncov
+
+	return cov / np.outer(np.diag(cov))
 
 def _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=True, conv_diff=1e-7, max_cycles=5, **kw):
 	cycles = 1
@@ -176,7 +172,7 @@ class FitOutput:
 		pass
 
 class FitModel:
-	
+
 	def __init__(self, f, sym=True, dfdx=None, dfdp=None, dfdpdx=None, invf=None, implicit=False):
 		"""if sym=True, use sympy to obtain derivatives from f
 		or f is a scipy.odr.Model or a FitModel to copy"""
@@ -196,7 +192,7 @@ class FitModel:
 			self._dfdpdx = dfdpdx
 			self._f = f
 			self._sym = False
-	
+
 	# def implicit(self):
 	# 	"""return True if the model is implicit (no y)"""
 	# 	pass
@@ -204,18 +200,18 @@ class FitModel:
 	def f(self):
 		"""return function"""
 		return self._f
-	
+
 	def f_odrpack(self, length):
 		rt = np.empty(length)
 		def f_p(B, x):
 			rt[:] = self._f(x, *B)
 			return rt
-		return f_p			
-	
+		return f_p
+
 	def dfdx(self):
 		"""return dfdx function"""
 		return self._dfdx
-	
+
 	def dfdx_odrpack(self, length):
 		"""return dfdx function with return format of scipy.odr's jacd"""
 		rt = np.empty(length)
@@ -223,11 +219,11 @@ class FitModel:
 			rt[:] = self._dfdx(x, *B)
 			return rt
 		return f_p
-	
+
 	def dfdps(self):
 		"""return list of dfdp functions, one for each parameter"""
 		return self._dfdps
-	
+
 	def dfdp_odrpack(self, length):
 		"""return dfdp function with return format of scipy.odr's jacb"""
 		rt = np.empty((len(self._dfdps), length))
@@ -236,7 +232,7 @@ class FitModel:
 				rt[i] = self._dfdps[i](x, *B)
 			return rt
 		return f_p
-	
+
 	def dfdp_curve_fit(self, length):
 		rt = np.empty((len(self._dfdps), length))
 		def f_p(*args):
@@ -244,18 +240,18 @@ class FitModel:
 				rt[i] = self._dfdps[i](*args)
 			return rt.T
 		return f_p
-	
+
 	def dfdpdxs(self):
 		return self._dfdpdxs
 
 def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True, method='odrpack', full_output=False, print_info=False, **kw):
 	"""f may be either callable or FitModel"""
-	
+
 	if isinstance(f, FitModel):
 		model = f
 	else:
 		model = FitModel(f)
-	
+
 	if method == 'odrpack':
 		fcn = model.f_odrpack(len(x))
 		fjacb = model.dfdp_odrpack(len(x))
@@ -271,14 +267,14 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 			cov *= chisq
 		if print_info:
 			output.pprint()
-		
+
 	elif method == 'linodr':
 		f = model.f()
 		dfdps = model.dfdps()
 		dfdx = model.dfdx()
 		dfdpdxs = model.dfdpdxs()
 		par, cov = _fit_generic_odr(f, dfdx, dfdps, dfdpdxs, x, y, dx, dy, p0)
-	
+
 	elif method == 'ev':
 		f = model.f()
 		dfdx = model.dfdx()
@@ -288,10 +284,10 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		par, cov, cycles = _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, **kw)
 		if cycles == -1:
 			raise RuntimeError('Maximum number (%d) of fit cycles reached' % max_cycles)
-	
+
 	else:
 		raise KeyError(method)
-	
+
 	return par, cov
 
 def _fit_affine_odr(x, y, dx, dy):
@@ -435,7 +431,7 @@ _fit_lin_ddofs = [1, 2]
 def fit_linear(x, y, dx=None, dy=None, offset=True, absolute_sigma=True, method='odr', print_info=False, **kw):
 	"""
 	Fit y = m * x + q
-	
+
 	If offset=False, fit y = m * x
 
 	Parameters
@@ -466,7 +462,7 @@ def fit_linear(x, y, dx=None, dy=None, offset=True, absolute_sigma=True, method=
 		'ev': use effective variance
 	print_info : bool
 		If True, print information about the fit.
-	
+
 	Keyword arguments
 	-----------------
 	When method='ev', the following parameters are meaningful:
@@ -475,7 +471,7 @@ def fit_linear(x, y, dx=None, dy=None, offset=True, absolute_sigma=True, method=
 	max_cycles : integer
 		The maximum number of fits done. If this maximum is reached, an exception
 		is raised.
-	
+
 	Returns
 	-------
 	par:
@@ -537,14 +533,14 @@ def fit_linear(x, y, dx=None, dy=None, offset=True, absolute_sigma=True, method=
 def fit_const_yerr(y, sigmay):
 	"""
 		fit y = a
-		
+
 		Parameters
 		----------
 		y : M-length array
 			dependent data
 		sigmay : M-length array
 			standard deviation of y
-		
+
 		Returns
 		-------
 		a : float
@@ -733,7 +729,7 @@ def util_mm_list():
 def util_mm_er(x, scale, metertype='lab3', unit='volt', sqerr=False):
 	"""
 	Returns the uncertainty of x and the internal resistance of the multimeter.
-	
+
 	Parameters
 	----------
 	x : number
@@ -748,33 +744,33 @@ def util_mm_er(x, scale, metertype='lab3', unit='volt', sqerr=False):
 		the unit of measure of x
 	sqerr : bool
 		If True, sum errors squaring.
-	
+
 	Returns
 	-------
 	e : number
 		the uncertainty
 	r : number or None
 		the internal resistance (if applicable)
-	
+
 	See also
 	--------
 	util_mm_esr, util_mm_esr2, mme
 	"""
-	
+
 	x = abs(x)
-	
+
 	errsum = (lambda x, y: math.sqrt(x**2 + y**2)) if sqerr else (lambda x, y: x + y)
-	
+
 	meter = _util_mm_esr_data[metertype]
 	info = meter[unit]
 	typ = meter['type']
-	
+
 	s = scale
 	idx = _find_scale_idx(s, info['scales'])
 	if idx < 0:
 		raise KeyError(s)
 	r = None
-	
+
 	if typ == 'digital':
 		e = errsum(x * info['perc'][idx] / 100.0, info['digit'][idx] * 10**(idx + math.log10(info['scales'][0] / 2.0) - 3))
 		if unit == 'volt' or unit == 'volt_ac':
@@ -792,7 +788,7 @@ def util_mm_er(x, scale, metertype='lab3', unit='volt', sqerr=False):
 		r = 10e6
 	else:
 		raise KeyError(typ)
-		
+
 	return e, r
 
 def util_mm_esr(x, metertype='lab3', unit='volt', sqerr=False):
@@ -800,7 +796,7 @@ def util_mm_esr(x, metertype='lab3', unit='volt', sqerr=False):
 	determines the fullscale used to measure x with a multimeter,
 	supposing the lowest possible fullscale was used, and returns the
 	uncertainty, the fullscale and the internal resistance.
-	
+
 	Parameters
 	----------
 	x : number
@@ -813,7 +809,7 @@ def util_mm_esr(x, metertype='lab3', unit='volt', sqerr=False):
 		the unit of measure of x
 	sqerr : bool
 		If True, sum errors squaring.
-	
+
 	Returns
 	-------
 	e : number
@@ -822,12 +818,12 @@ def util_mm_esr(x, metertype='lab3', unit='volt', sqerr=False):
 		the full-scale
 	r : number or None
 		the internal resistance (if applicable)
-	
+
 	See also
 	--------
 	util_mm_er, util_mm_esr2, mme
 	"""
-	
+
 	x = abs(x)
 	info = _util_mm_esr_data[metertype][unit]
 	idx = _find_scale(x, info['scales'])
@@ -849,18 +845,18 @@ _util_mm_esr2_what = dict(
 def util_mm_esr2(x, metertype='lab3', unit='volt', what='error', sqerr=False):
 	"""
 	Vectorized version of lab.util_mm_esr
-	
+
 	Parameters
 	----------
 	what : string
 		one of 'error', 'scale', 'res'
 		what to return
-	
+
 	Returns
 	-------
 	z : number
 		either the uncertainty, the fullscale or the internal resistance.
-	
+
 	See also
 	--------
 	util_mm_er, util_mm_esr, mme
@@ -874,10 +870,10 @@ def mme(x, unit, metertype='lab3', sqerr=False):
 	determines the fullscale used to measure x with a multimeter,
 	supposing the lowest possible fullscale was used, and returns the
 	uncertainty of the measurement.
-	
+
 	Parameters
 	----------
-	x : (X-shaped array of) number 
+	x : (X-shaped array of) number
 		the value measured, may be negative
 	unit : (X-shaped array of) string
 		one of 'volt', 'volt_ac', 'ampere' 'ampere_ac', 'ohm', 'farad'
@@ -887,12 +883,12 @@ def mme(x, unit, metertype='lab3', sqerr=False):
 		the multimeter used
 	sqerr : bool
 		If True, sum errors squaring.
-	
+
 	Returns
 	-------
 	e : (X-shaped array of) number
 		the uncertainty
-	
+
 	See also
 	--------
 	util_mm_er, util_mm_esr, util_mm_esr2
@@ -939,7 +935,7 @@ def _format_epositive(x, e, errsep=True, minexp=3):
 def util_format(x, e, pm=None, percent=False, comexp=True, nicexp=False):
 	"""
 	format a value with its uncertainty
-	
+
 	Parameters
 	----------
 	x : number (or something understood by float(), ex. string representing number)
@@ -954,12 +950,12 @@ def util_format(x, e, pm=None, percent=False, comexp=True, nicexp=False):
 		if True, write the exponent once.
 	nicexp : bool
 		if True, format exponent like ×10¹²³
-	
+
 	Returns
 	-------
 	s : string
 		the formatted value with uncertainty
-	
+
 	Examples
 	--------
 	util_format(123, 4) --> '123(4)'
@@ -969,7 +965,7 @@ def util_format(x, e, pm=None, percent=False, comexp=True, nicexp=False):
 	util_format(1e8, 2.5e6, pm='+-', comexp=False) --> '1.000e+8 +- 0.025e+8'
 	util_format(1e8, 2.5e6, percent=True) --> '1.000(25)e+8 (2.5 %)'
 	util_format(nan, nan) = 'nan +- nan'
-	
+
 	See also
 	--------
 	xe, xep
@@ -1002,12 +998,12 @@ def xe(x, e, pm=None, comexp=True, nicexp=False):
 	"""
 	Vectorized version of util_format with percent=False,
 	see lab.util_format and numpy.vectorize.
-	
+
 	Example
 	-------
 	xe(['1e7', 2e7], 33e4) --> ['1.00(3)e+7', '2.00(3)e+7']
 	xe(10, 0.8, pm=unicode_pm) --> '10.0 ± 0.8'
-	
+
 	See also
 	--------
 	xep, num2si, util_format
@@ -1018,12 +1014,12 @@ def xep(x, e, pm=None, comexp=True, nicexp=False):
 	"""
 	Vectorized version of util_format with percent=True,
 	see lab.util_format and numpy.vectorize.
-	
+
 	Example
 	-------
 	xep(['1e7', 2e7], 33e4) --> ['1.00(3)e+7 (3.3 %)', '2.00(3)e+7 (1.7 %)']
 	xep(10, 0.8, pm=unicode_pm) --> '10.0 ± 0.8 (8 %)'
-	
+
 	See also
 	--------
 	xe, num2si, util_format
@@ -1037,7 +1033,7 @@ unicode_pm = u'±'
 def num2si(x, format='%.15g', si=True, space=' '):
 	"""
 	Returns x formatted using an exponent that is a multiple of 3.
-	
+
 	Parameters
 	----------
 	x : number
@@ -1050,12 +1046,12 @@ def num2si(x, format='%.15g', si=True, space=' '):
 		used anyway.
 	space : string
 		string interposed between the mantissa and the exponent
-	
+
 	Returns
 	-------
 	fx : string
 		the formatted value
-	
+
 	Example
 	-------
 	     x     | num2si(x)
@@ -1065,7 +1061,7 @@ def num2si(x, format='%.15g', si=True, space=' '):
 	    1230.0 |  1.23 k
 	-1230000.0 |  -1.23 M
 	         0 |  0
-	
+
 	See also
 	--------
 	util_format, xe, xep
@@ -1076,14 +1072,14 @@ def num2si(x, format='%.15g', si=True, space=' '):
 	exp = int(math.floor(math.log10(abs(x))))
 	exp3 = exp - (exp % 3)
 	x3 = x / (10 ** exp3)
-	
+
 	if si and exp3 >= -24 and exp3 <= 24 and exp3 != 0:
 		exp3_text = space + 'yzafpnμm kMGTPEZY'[(exp3 - (-24)) // 3]
 	elif exp3 == 0:
 		exp3_text = space
 	else:
 		exp3_text = 'e%s' % exp3 + space
-	
+
 	return (format + '%s') % (x3, exp3_text)
 
 _subscr  = '₀₁₂₃₄₅₆₇₈₉₊₋ₑ․'
@@ -1093,7 +1089,7 @@ _supscr  = '⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻ᵉ·'
 def num2sub(x, format=None):
 	"""
 	Format a number as subscript.
-	
+
 	Parameters
 	----------
 	x : string or number
@@ -1101,7 +1097,7 @@ def num2sub(x, format=None):
 	format : None or string
 		If None, x is interpreted as string and formatted subscript as-is.
 		If string, it is a %-format used to format x before converting to subscript.
-	
+
 	Returns
 	-------
 	s : string
@@ -1118,7 +1114,7 @@ def num2sub(x, format=None):
 def num2sup(x, format=None):
 	"""
 	Format a number as superscript.
-	
+
 	Parameters
 	----------
 	x : string or number
@@ -1126,7 +1122,7 @@ def num2sup(x, format=None):
 	format : None or string
 		If None, x is interpreted as string and formatted superscript as-is.
 		If string, it is a %-format used to format x before converting to superscript.
-	
+
 	Returns
 	-------
 	s : string
@@ -1145,12 +1141,12 @@ def num2sup(x, format=None):
 def util_timecomp(secs):
 	"""
 		convert a time interval in seconds to hours, minutes, seconds
-		
+
 		Parameters
 		----------
 		secs : number
 			the time interval expressed in seconds
-		
+
 		Returns
 		-------
 		hours : int
@@ -1159,7 +1155,7 @@ def util_timecomp(secs):
 			minutes, 0--59
 		seconds : int
 			seconds, 0--59
-	
+
 		See also
 		--------
 		util_timestr
@@ -1172,17 +1168,17 @@ def util_timecomp(secs):
 def util_timestr(secs):
 	"""
 		convert a time interval in seconds to a string with hours, minutes, seconds
-		
+
 		Parameters
 		----------
 		secs : number
 			the time interval expressed in seconds
-		
+
 		Returns
 		-------
 		str : str
 			string representing the interval
-	
+
 		See also
 		--------
 		util_timecomp
@@ -1195,18 +1191,18 @@ def etastart():
 	"""
 	Call at the startpoint of something you want to compute the eta (estimated
 	time of arrival) of.
-	
+
 	Returns
 	-------
 	An object containing the starting time, to be given as argument to etastr().
-	
+
 	Example
 	-------
 	>>> eta = etastart()
 	>>> for i in range(N):
 	>>>     print('elapsed time: %s, remaining time: %s' % etastr(eta, i / N))
 	>>>     # do something
-	
+
 	See also
 	--------
 	etastr
@@ -1217,7 +1213,7 @@ def etastart():
 def etastr(eta, progress, mininterval=np.inf):
 	"""
 	Compute the eta given a startpoint returned from etastart() and the progress.
-	
+
 	Parameters
 	----------
 	eta :
@@ -1225,21 +1221,21 @@ def etastr(eta, progress, mininterval=np.inf):
 	progress : number in [0,1]
 		the progress on a time-linear scale where 0 means still nothing done and
 		1 means finished.
-	
+
 	Returns
 	-------
 	timestr : string
 		elapsed time
 	etastr : string
 		estimated time remaining
-	
+
 	Example
 	-------
 	>>> eta = etastart()
 	>>> for i in range(N):
 	>>>     print('elapsed time: %s, remaining time: %s' % etastr(eta, i / N))
 	>>>     # do something
-	
+
 	See also
 	--------
 	etastart
@@ -1264,7 +1260,7 @@ def sanitizefilename(name, windows=True):
 	"""
 	Removes characters not allowed by the filesystem, replacing
 	them with similar unicode characters.
-	
+
 	Parameters
 	----------
 	name : string
@@ -1272,7 +1268,7 @@ def sanitizefilename(name, windows=True):
 		replaced.
 	windows : bool
 		If True, also replace characters not allowed in Windows.
-	
+
 	Return
 	------
 	filename : string
@@ -1289,7 +1285,7 @@ def nextfilename(base, ext, idxfmt='%02d', prepath=None, start=1, sanitize=True)
 		<base><index><ext>
 	This functions search for the pattern with the lowest index that is not
 	the path of an existing file.
-	
+
 	Parameters
 	----------
 	base : string
@@ -1307,7 +1303,7 @@ def nextfilename(base, ext, idxfmt='%02d', prepath=None, start=1, sanitize=True)
 		If True, process <base> and <ext> with sanitizefilename. In this case,
 		<base> should not contain a path since slashes are replaced. Use
 		<prepath> instead.
-	
+
 	Returns
 	-------
 	filename : string
