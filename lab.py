@@ -127,7 +127,8 @@ def fit_norm_cov(cov):
 		the normalized matrix
 	"""
 
-	return cov / np.outer(np.diag(cov))
+	s = np.diag(cov)
+	return cov / np.outer(s, s)
 
 def _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=True, conv_diff=1e-7, max_cycles=5, **kw):
 	cycles = 1
