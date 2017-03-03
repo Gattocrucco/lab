@@ -452,8 +452,9 @@ def fit_linear(x, y, dx=None, dy=None, offset=True, absolute_sigma=True, method=
 		dx=0 and dy was uniform. If only one of dx or dy is None, the fit
 		behaves as if it is zero.
 	offset : bool
-		If True, fit y = m + x + q; else fit y = m * x. If False,
-		the output format does not change.
+		If True, fit y = m * x + q; else fit y = m * x. If False,
+		the output format does not change, and quantities corresponding
+		to q are set to 0.
 	absolute_sigma : bool
 		If True, compute standard error on parameters (maximum likelihood
 		estimation assuming datapoints are normal). If False, rescale
@@ -991,9 +992,9 @@ def util_format(x, e, pm=None, percent=False, comexp=True, nicexp=False):
 		s = '(' + sx + ' ' + pm + ' ' + se + ')' + es
 	else:
 		s = sx + es + ' ' + pm + ' ' + se + es
-	if (not percent) or sx == '0':
+	if (not percent) or sx.split('(')[0] == '0':
 		return s
-	pe = e / x * 100.0
+	pe = e / abs(x) * 100.0
 	return s + " (%.*g %%)" % (2 if pe < 100.0 else 3, pe)
 
 _util_format_vect = np.vectorize(util_format, otypes=[str])

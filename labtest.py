@@ -18,6 +18,10 @@ class TestLab(unittest.TestCase):
 		self.assertEqual(lab.util_format(1.23456789e-8, 1.1111e-10, pm=None, percent=False), '1.235(11)e-8')
 		# check that number of digits is chosen correctly in case of uncertainty rounding
 		self.assertEqual(lab.util_format(10, 0.99, pm=None, percent=False), '10.0(10)')
+		# check that percentual error is not negative
+		self.assertEqual(lab.util_format(-1, 1, pm=None, percent=True), '-1.0(10) (100 %)')
+		# check that percentual error is suppressed if mantissa is 0 when we are using compact error notation
+		self.assertEqual(lab.util_format(0.001, 1, pm=None, percent=True), '0(10)e-1')
 	
 	def test_util_mm_esr(self):
 		# check that big numbers are checked
