@@ -205,7 +205,6 @@ class DataHolder(object):
 
 	def __init__(self, x, y, dx=0, dy=0, name=None):
 		self.num = next(self._holdercount)
-		self.fig = plt.figure(self.num)
 		self.datakw = dict(fmt='none', ecolor='black', label='data')
 		self.pts = None
 		self.title = ""
@@ -224,6 +223,11 @@ class DataHolder(object):
 			z.type = 'linear'
 			z.re = 1
 			z.label = ""
+
+	def sort(self, **kwargs):
+		srt = np.argsort(self.x.val, **kwargs)
+		for z in (self.x.val, self.x.err, self.y.val, self.y.err):
+			z = z[srt]
 
 	def fit_generic(self, *funcs, verbose=True, **kwargs):
 
@@ -313,6 +317,8 @@ class DataHolder(object):
 		self.main_ax = main_ax
 
 	def draw(self, *funcs, resid=False, data=True, legend=True):
+		self.fig = plt.figure(self.num)
+		self.fig.clf()
 		self._graph_setup(resid)
 		main_ax = self.main_ax
 		if not resid:
