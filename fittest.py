@@ -32,7 +32,7 @@ fs = [ # sympy functions
 f = fs[3] # function to fit
 
 mcn = 1000 # number of repetitions (monte carlo)
-fitfun = 'odrpack' # ev, odr, odrpack, curve_fit, hoch
+fitfun = 'odrpack' # ev, odr, odrpack, curve_fit
 xmean = linspace(0, 10, 100) # true x
 n = len(xmean) # number of points
 dys = outer([1], ones(n)*.1) # errors, axis 0 = dataset, axis 1 = point
@@ -108,8 +108,6 @@ for ll in range(len(dys)):
 					par, cov = lab.fit_generic(model, x, y, dx, dy, p0=p0, method='ev', max_cycles=10)
 				elif fitfun == 'odr':
 					par, cov = lab.fit_generic(model, x, y, dx, dy, p0=p0, method='linodr')
-				elif fitfun == 'hoch':
-					par, cov = fit_generic_xyerr4(model.f(), model.fi(), model.dfdp_odrpack(), model.dfidp(), x, y, dx, dy, p0)
 				elif fitfun == 'odrpack':
 					par, cov = lab.fit_generic(model, x, y, dx, dy, p0=p0, method='odrpack')
 				elif fitfun == 'curve_fit':
@@ -167,7 +165,7 @@ for ll in range(len(dys)):
 					rows = 1 + len(p0)
 					cols = len(p0)
 				
-				figure('Function %s, fit with method “%s”' % (fstr, fitfun), figsize=(5*cols,3*rows)).set_tight_layout(True)
+				figure('Function %s, fit with method “%s”' % (fstr, fitfun), figsize=(4*cols, 2.3*rows)).set_tight_layout(True)
 				clf()
 				
 				# histogram of parameter; diagonal
@@ -177,7 +175,7 @@ for ll in range(len(dys)):
 					S = (pars[:,i] - p0[i]) / sqrt(covs[:,i,i])
 					hist(S, **histkw)
 					plot_text("$p_%d = $%g\n$\\bar{p}_{%d}-p_{%d} = $%.2g $\\bar{\sigma}_{%d}$" % (i, p0[i], i, i, pdist[i], i))
-					ticklabel_format(style='sci', axis='x', scilimits=(-3,3))
+					# ticklabel_format(style='sci', axis='x', scilimits=(-3,3))
 					
 				# histogram of covariance; lower triangle
 				for i in range(len(p0)):
@@ -187,7 +185,7 @@ for ll in range(len(dys)):
 						C = ((pars[:,i] - p0[i]) * (pars[:,j] - p0[j]) - covs[:,i,j]) / sqrt(covs[:,i,j]**2 + covs[:,i,i]*covs[:,j,j])
 						hist(C, **histkw)
 						plot_text("$\\bar{\\rho}_{%d%d} = $%.2g\n$(\\bar{p}_{%d}-p_{%d})\cdot(\\bar{p}_{%d}-p_{%d})-\\bar{\sigma}_{%d%d} = $%.2g $\sqrt{\\bar{\sigma}_{%d%d}^2+\\bar{\sigma}_{%d}^2\\bar{\sigma}_{%d}^2}$" % (i, j, prho[i,j], i, i, j, j, i, j, pdistc[i,j], i, j, i, j))
-						ticklabel_format(style='sci', axis='x', scilimits=(-3,3))
+						# ticklabel_format(style='sci', axis='x', scilimits=(-3,3))
 				
 				# scatter plot of pairs of parameters; upper triangle
 				for i in range(len(p0)):
@@ -201,7 +199,7 @@ for ll in range(len(dys)):
 							Y = Y[::int(ceil(len(Y) / maxscatter))]
 						plot(X, Y, '.k', markersize=2)
 						grid()
-						ticklabel_format(style='sci', axis='both', scilimits=(-3,3))
+						# ticklabel_format(style='sci', axis='both', scilimits=(-3,3))
 				
 				# histogram of chisquare; last row column 1
 				subplot(rows, cols, 1 + cols * (rows - 1))
@@ -231,7 +229,7 @@ for ll in range(len(dys)):
 				show()
 
 if showpsplot:
-	figure('Function %s, fit with method “%s”, parameter biases' % (fstr, fitfun), figsize=(14,10)).set_tight_layout(True)
+	figure('Function %s, fit with method “%s”, parameter biases' % (fstr, fitfun), figsize=(10,7)).set_tight_layout(True)
 	clf()
 	for i in range(len(p0s)): # p_i = fitted
 		for j in range(len(p0s)): # p_j = true
@@ -263,7 +261,7 @@ if showpsplot:
 
 if showpsdtplot:
 	
-	figure('Function %s, fit with method “%s”, parameters vs. errors' % (fstr, fitfun), figsize=(14,10)).set_tight_layout(True)
+	figure('Function %s, fit with method “%s”, parameters vs. errors' % (fstr, fitfun), figsize=(10,7)).set_tight_layout(True)
 	clf()
 	
 	ds = [
