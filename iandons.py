@@ -410,10 +410,10 @@ def data_from_oscill(filename, verbose=True, graphicose=True, getall=False):
 		for a in (t1, t2, ch1, ch2):
 			a = np.array(a)
 
-		dch1 = mme(np.amax(np.abs(ch1)), "oscil", 'volt')
-		dch2 = mme(np.amax(np.abs(ch2)), "oscil", 'volt')
-		dt1 = mme(np.amax(t1) - np.amin(t1), "oscil", 'time')
-		dt2 = mme(np.amax(t2) - np.amin(t2), "oscil", 'time')
+		dch1 = mme(np.amax(np.abs(ch1)), 'volt', "oscil")
+		dch2 = mme(np.amax(np.abs(ch2)), 'volt', "oscil")
+		dt1 = mme(np.amax(t1) - np.amin(t1), 'time', "oscil")
+		dt2 = mme(np.amax(t2) - np.amin(t2), 'time', "oscil")
 		channel1 = DataHolder(t1, ch1, dt1, dch1)
 		channel2 = DataHolder(t2, ch2, dt2, dch2)
 
