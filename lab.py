@@ -11,6 +11,9 @@ import sympy
 
 # TODO
 #
+# util_mm_esr
+# aggiungere possibilità di configurazione degli errori (in particolare non contare l'errore percentuale) usando il parametro sqerr
+#
 # fit_concatenate
 # concatena modelli di fit per fittare simultaneamente condividendo parametri
 #
@@ -127,7 +130,7 @@ def fit_norm_cov(cov):
 		the normalized matrix
 	"""
 
-	s = np.diag(cov)
+	s = np.sqrt(np.diag(cov))
 	return cov / np.outer(s, s)
 
 def _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=True, conv_diff=1e-7, max_cycles=5, **kw):

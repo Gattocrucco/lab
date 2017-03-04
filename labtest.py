@@ -1,5 +1,6 @@
 import unittest
 import lab
+import numpy as np
 
 class TestLab(unittest.TestCase):
 
@@ -27,11 +28,12 @@ class TestLab(unittest.TestCase):
 		# check that big numbers are checked
 		with self.assertRaises(ValueError):
 			lab.util_mm_esr(1e8, unit='volt', metertype='kdm700')
-
-	# def test_isupper(self):
-	# 	self.assertTrue('FOO'.isupper())
-	# 	self.assertFalse('Foo'.isupper())
-	#
+	
+	def test_fit_norm_cov(self):
+		# just check that it works because there's always someone willing to rewrite this stupid function
+		cov = [[4, 9], [-3, 16]]
+		normalized_cov = [[1, 1.125], [-0.375, 1]]
+		self.assertTrue(np.array_equal(lab.fit_norm_cov(cov), normalized_cov))
 
 if __name__ == '__main__':
 	unittest.main()
