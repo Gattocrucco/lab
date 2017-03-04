@@ -379,7 +379,7 @@ def tryparse(s):
 		return s
 
 
-def data_from_oscill(filename, verbose=True, graphicose=True, getall=False):
+def data_from_oscill(filename, verbose=True, mode='t', getall=False):
 		file = open(filename)
 		t1 = []
 		t2 = []
@@ -414,7 +414,12 @@ def data_from_oscill(filename, verbose=True, graphicose=True, getall=False):
 		dch2 = mme(np.amax(np.abs(ch2)), 'volt', "oscil")
 		dt1 = mme(np.amax(t1) - np.amin(t1), 'time', "oscil")
 		dt2 = mme(np.amax(t2) - np.amin(t2), 'time', "oscil")
-		channel1 = DataHolder(t1, ch1, dt1, dch1)
-		channel2 = DataHolder(t2, ch2, dt2, dch2)
 
-		return channel1, channel2
+		if mode == 't':
+			channel1 = DataHolder(t1, ch1, dt1, dch1)
+			channel2 = DataHolder(t2, ch2, dt2, dch2)
+			return channel1, channel2
+		elif mode == 'xy':
+			return DataHolder(ch1, ch2, dch1, dch2)
+		elif mode == 'yx':
+			return DataHolder(ch2, ch1, dch2, dch1)
