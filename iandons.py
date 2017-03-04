@@ -5,6 +5,7 @@ import scipy.stats.distributions as dists
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import inspect
+import re
 from lab import *
 
 # *********************** UTILITIES *************************
@@ -361,3 +362,59 @@ class DataHolder(object):
 				variance = self.y.err**2 + self.x.err**2 * df(self.x.val, *fun.pars)**2
 				fun.resd = res = delta / np.sqrt(variance)
 			resd_ax.plot(x[mask], res, **resdkw)
+
+
+# *********************** OSCILLOSCOPE *************************
+
+__debug = False
+reg = re.compile(r"(?P<nome>[\w]+\s?[\w]*),(?P<dato>[\w\+\-\.]+)")
+reg2 = re.compile(r"(?P<nome>[\w]+\s?[\w]*),(?P<dato>[\w\+\-\.]+[\.*,\.*])+[,\n]")
+
+
+def tryparse(s):
+	try:
+		return float(s)
+	except:
+		print("string \"", s, "\" is not a float, is it?")
+		return s
+
+
+def data_from_oscill(filename, verbose=True, graphicose=True, getall=False):
+		file = open(filename)
+		t1 = []
+		t2 = []
+		ch1 = []
+		ch2 = []
+		CH1params = {}
+		CH2params = {}
+		for l in file.readlines():
+			try:
+				w = re.findall(r"[\+\-\w\.]+", l)
+				t1.append(float(w[0]))
+				ch1.append(float(w[1]))
+				t2.append(float(w[2]))
+				ch2.append(float(w[3]))
+				if __debug:
+					print("Trovata roba in ", l, " --->", (w[0], float(w[1]), float(w[2]), float(w[3])))
+			except:
+			# print("datino")
+				if(getall):
+					k = reg.findall(l)
+					print(k)
+					for i in k:
+						if(i[0] in CH1params):
+							CH2params[i[0]] = i[1]  # tryparse(i[1])
+						else:
+							CH1params[i[0]] = i[1]  # tryparse(i[1])
+
+		for a in (t1, t2, ch1, ch2):
+			a = np.array(a)
+
+		dch1 = mme(np.amax(np.abs(ch1)), "oscil", 'volt')
+		dch2 = mme(np.amax(np.abs(ch2)), "oscil", 'volt')
+		dt1 = mme(np.amax(t1) - np.amin(t1), "oscil", 'time')
+		dt2 = mme(np.amax(t2) - np.amin(t2), "oscil", 'time')
+		channel1 = DataHolder(t1, ch1, dt1, dch1)
+		channel2 = DataHolder(t2, ch2, dt2, dch2)
+
+		return channel1, channel2

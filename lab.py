@@ -711,7 +711,7 @@ _util_mm_esr_data = dict(
 		),
 		time=dict(
 			scales=[5e-09] + [ (10*d*10**s) for s in range(-9, 2) for d in [1, 2.5, 5] ]
-
+			div=[5e-10] + [ (d*10**s) for s in range(-9, 2) for d in [1, 2.5, 5] ]
 		),
 		freq=dict(
 			scales=[1e9]
