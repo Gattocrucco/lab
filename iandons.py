@@ -416,8 +416,8 @@ def data_from_oscill(filename, verbose=True, mode='t', getall=False):
 		for a in (t1, t2, ch1, ch2):
 			a = np.array(a)
 
-		dch1 = mme(np.amax(np.abs(ch1)), 'volt', "oscil")
-		dch2 = mme(np.amax(np.abs(ch2)), 'volt', "oscil")
+		dch1 = mme(np.amax(ch1) - np.amin(ch1), 'volt', "oscil")
+		dch2 = mme(np.amax(ch2) - np.amin(ch2), 'volt', "oscil")
 		dt1 = mme(np.amax(t1) - np.amin(t1), 'time', "oscil")
 		dt2 = mme(np.amax(t2) - np.amin(t2), 'time', "oscil")
 
