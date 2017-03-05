@@ -248,13 +248,23 @@ class FitModel:
 	def dfdpdxs(self):
 		return self._dfdpdxs
 
-def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True, method='odrpack', full_output=False, print_info=False, **kw):
+def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True, method='auto', full_output=False, print_info=False, **kw):
 	"""f may be either callable or FitModel"""
 
 	if isinstance(f, FitModel):
 		model = f
 	else:
 		model = FitModel(f)
+	
+	if method == 'auto':
+		dxn = dx is None
+		dyn = dy is None
+		if dxn and dyn:
+			method = 'leastsq'
+		elif dxn:
+			method = 'wleastsq'
+		else:
+			method = 'odrpack'
 
 	if method == 'odrpack':
 		fcn = model.f_odrpack(len(x))
@@ -288,6 +298,16 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		par, cov, cycles = _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, **kw)
 		if cycles == -1:
 			raise RuntimeError('Maximum number (%d) of fit cycles reached' % max_cycles)
+	
+	elif method == 'wleastsq':
+		f = model.f()
+		jac = model.dfdp_curve_fit(len(x))
+		par, cov = curve_fit_patched(f, x, y, sigma=dy, p0=p0, absolute_sigma=absolute_sigma, jac=jac, **kw)
+	
+	elif method == 'leastsq':
+		f = model.f()
+		jac = model.dfdp_curve_fit(len(x))
+		par, cov = curve_fit_patched(f, x, y, p0=p0, absolute_sigma=False, jac=jac, **kw)
 
 	else:
 		raise KeyError(method)
@@ -969,7 +989,7 @@ def util_format(x, e, pm=None, percent=False, comexp=True, nicexp=False):
 	util_format(1e8, 2.5e6, pm='+-') --> '(1.000 +- 0.025)e+8'
 	util_format(1e8, 2.5e6, pm='+-', comexp=False) --> '1.000e+8 +- 0.025e+8'
 	util_format(1e8, 2.5e6, percent=True) --> '1.000(25)e+8 (2.5 %)'
-	util_format(nan, nan) = 'nan +- nan'
+	util_format(nan, nan) --> 'nan +- nan'
 
 	See also
 	--------
