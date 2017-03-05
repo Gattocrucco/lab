@@ -5,17 +5,35 @@ from pylab import *
 import lab
 import time
 
-# TODO
-# sembra funzionare (posto che gli si dia ottimi parametri iniziali, in pratica devo dargli già il risultato e lui mi fa la correzione bayesiana), però con 2 parametri è già lentissimo (dovrebbe essere esponenziale nel numero di parametri).
+# TODO/NOTE
+#
+# fit_bayes_1
+# va esponenziale nel numero di parametri, è ragionevole fino a due parametri
+# 1 parametro: un cazzo
+# 2 parametri: 1 secondo
+# 3 parametri: 2 minuti
+# 4 parametri: non ci ho provato, 4 ore?
+# approssima tagliando gli estremi di integrazione (anche se nquad potrebbe integrare fino a ±∞), bisogna modificarlo in modo che il taglio segua la correlazione, quindi l'argomento dp0 va rimpiazzato con un covp0, al momento l'errore per difetto è talvolta visibile.
+# si può ancora guadagnare un fattore costante parallelizzando gli integrali, girando un po' le cose dovrebbero essere TUTTI indipendenti a meno di overflow
+# la posteriori iniziale non normalizzata mi sa che va in overflow con abbastanza dati, con 10000 ci sta ancora, con 100000 di punti non mi fiderei
+# bisogna poter dare i priori!
+# di sicuro questa funzione non va bene con gli errori sulle x perché lì ogni x è un parametro
+#
+# bisogna fare un fit_bayes_2 che usi monte carlo
+# metodi possibili:
+# 0) sampling uniforme ignorante
+# 1) sampling gaussiano basato su p0, covp0
+# 2) sampling furbo che spara N uniformi, se la varianza è ancora alta divide lungo x_0 e va avanti ricorsivo (ciclando x_1, x_2, etc altrimenti la suddivisione a cubetti porta un andamento esponenziale)
+# 3) impacchettare emcee (mi spaventa scegliere in automatico il burn-in)
 
-f = lambda x, a, b: a * x + b
-p0 = (-7, 5)
-x = linspace(0, 1, 10000)
+f = lambda x, a, b: a * x**2 + b*x #+ c
+p0 = (-1, -1)#, -1)
+x = linspace(0, 1, 100000)
 dy = np.array([0.05] * len(x))
 
 y = f(x, *p0) + randn(len(x)) * dy
 
-def fit_bayes(f, x, y, dy, p0, dp0):
+def fit_bayes_1(f, x, y, dy, p0, dp0):
 	p0 = asarray(p0)
 	dp0 = asarray(dp0)
 	
@@ -26,6 +44,10 @@ def fit_bayes(f, x, y, dy, p0, dp0):
 	# 1/2 because the are two sources of error, one is sistematic
 	# 1/√2 because everything gets multiplied by normalization
 	relerr = 10 ** (-3/2) * 1/2 * 1/2 * 1/np.sqrt(2)
+	
+	# lim = 1 / sqrt(epsrel) # cebichev inequality
+	flim = lambda epsrel: abs(stats.norm.ppf(epsrel / 3))
+	fopts = lambda epsrel: dict(epsabs=0, epsrel=epsrel)
 	
 	idy2 = 1 / dy ** 2
 	def L(*p):
@@ -45,14 +67,13 @@ def fit_bayes(f, x, y, dy, p0, dp0):
 		return L(*p) * prod_dp0
 	
 	epsrel = 1 / np.sqrt(len(p0)) * relerr * min(dp0 / np.abs(p0)) # quadrature relative errors sum
-	# lim = 1 / sqrt(epsrel) # from cebichev inequality
-	lim = abs(stats.norm.ppf(epsrel / 2)) # normal approximation
+	lim = flim(epsrel)
 	
 	start = time.time()
-	N, dN = nquad(fint, [(-lim, lim)] * len(p0), opts=dict(epsabs=0, epsrel=epsrel))
+	N, dN, out = nquad(fint, [(-lim, lim)] * len(p0), opts=fopts(epsrel), full_output=True)
 	deltat = time.time() - start
 	
-	print('Normalization = %s, Limits: ±%.1f, relative error: %.2g' % (lab.xe(N, dN), lim, epsrel))
+	print('Normalization = %s, lim: ±%.1f, epsrel: %.2g, neval: %d' % (lab.xe(N, dN), lim, epsrel, out['neval']))
 
 	fa = linspace(-3, 3, 1000)
 	
@@ -80,12 +101,14 @@ def fit_bayes(f, x, y, dy, p0, dp0):
 			p = np.array(p) * dp0 + p0
 			return p[i] * L(*p) * C
 		epsrel = 1 / np.sqrt(len(p0)) * relerr * dp0[i] / abs(p0[i])
-		lim = abs(stats.norm.ppf(epsrel / 2))
+		lim = flim(epsrel)
 		start = time.time()
-		par[i], err = np.array(nquad(fint, [(-lim, lim)] * len(p0), opts=dict(epsabs=0, epsrel=epsrel))) * p0[i]
+		par[i], err, out = nquad(fint, [(-lim, lim)] * len(p0), opts=fopts(epsrel), full_output=True)
+		par[i] *= p0[i]
+		err *= p0[i]
 		deltat = time.time() - start
 		
-		print('Average_%d = %s, Limits: ±%.1f, relative error: %.2g' % (i, lab.xe(par[i], err), lim, epsrel))
+		print('Average_%d = %s, lim: ±%.1f, epsrel: %.2g, neval: %d' % (i, lab.xe(par[i], err), lim, epsrel, out['neval']))
 		
 		subplot(len(p0), len(p0) + 1, i * (len(p0) + 1) + 1)
 		p = zeros(len(p0))
@@ -104,13 +127,15 @@ def fit_bayes(f, x, y, dy, p0, dp0):
 				p = np.array(p) * dp0 + par
 				return (p[i] - par[i]) * (p[j] - par[j]) * L(*p) * C
 			epsrel = 1 / np.sqrt(len(p0)) * relerr / sqrt(2)
-			lim = abs(stats.norm.ppf(epsrel / 2))
+			lim = flim(epsrel)
 			start = time.time()
-			cov[i, j], err = array(nquad(fint, [(-lim, lim)] * len(p0), opts=dict(epsabs=0, epsrel=epsrel))) * C0
+			cov[i, j], err, out = nquad(fint, [(-lim, lim)] * len(p0), opts=fopts(epsrel), full_output=True)
+			cov[i, j] *= C0
+			err *= C0
 			deltat = time.time() - start
 			cov[j, i] = cov[i, j]
 			
-			print('Covariance_%d,%d = %s, Limits: ±%.1f, relative error: %.2g' % (i, j, lab.xe(cov[i, j], err), lim, epsrel))
+			print('Covariance_%d,%d = %s, lim: ±%.1f, epsrel: %.2g, neval: %d' % (i, j, lab.xe(cov[i, j], err), lim, epsrel, out['neval']))
 		
 			subplot(len(p0), len(p0) + 1, i * (len(p0) + 1) + j + 2)
 			p = zeros(len(p0))
@@ -125,12 +150,12 @@ def fit_bayes(f, x, y, dy, p0, dp0):
 
 par, cov = lab.fit_generic(f, x, y, dy=dy, p0=p0)
 
-print(lab.fit_norm_cov(cov))
+print(cov)
 print(lab.xe(par, sqrt(diag(cov))))	
 
-par, cov = fit_bayes(f, x, y, dy, par, sqrt(diag(cov)))
+par, cov = fit_bayes_1(f, x, y, dy, par, sqrt(diag(cov)))
 
-print(lab.fit_norm_cov(cov))
+print(cov)
 print(lab.xe(par, sqrt(diag(cov))))	
 
 show()
