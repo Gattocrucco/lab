@@ -27,9 +27,9 @@ import time
 # 3) impacchettare emcee (mi spaventa scegliere in automatico il burn-in)
 
 f = lambda x, a, b: a * x**2 + b*x #+ c
-p0 = (-1, -1)#, -1)
-x = linspace(0, 1, 100000)
-dy = np.array([0.05] * len(x))
+p0 = (-1000, -1000)#, -1)
+x = linspace(0, 1, 10000)
+dy = np.array([50] * len(x))
 
 y = f(x, *p0) + randn(len(x)) * dy
 
@@ -50,13 +50,14 @@ def fit_bayes_1(f, x, y, dy, p0, dp0):
 	fopts = lambda epsrel: dict(epsabs=0, epsrel=epsrel)
 	
 	idy2 = 1 / dy ** 2
+	chi20 = np.sum((y - f(x, *p0))**2 * idy2)
 	def L(*p):
 		# must be centered around the maximum
 		# also we must be careful with overflow/underflow
 		# return np.exp(-0.5 * np.sum(((y - f(x, *p)) / dy)**2))
 		# return np.prod(np.exp(-((y - f(x, *p)) / dy)**2 / 2) / (np.sqrt(2 * np.pi) * dy))
 		# return np.exp((-np.sum(((y - f(x, *p)) / dy)**2) + len(x) - len(p0)) / 2)
-		return np.exp((-np.sum((y - f(x, *p))**2 * idy2) + len(x)) / 2)
+		return np.exp((-np.sum((y - f(x, *p))**2 * idy2) + chi20) / 2)
 	
 	# NORMALIZATION
 	
@@ -64,7 +65,7 @@ def fit_bayes_1(f, x, y, dy, p0, dp0):
 	# and that the horizontal scale is about 1
 	def fint(*p):
 		p = np.array(p) * dp0 + p0
-		return L(*p) * prod_dp0
+		return L(*p)
 	
 	epsrel = 1 / np.sqrt(len(p0)) * relerr * min(dp0 / np.abs(p0)) # quadrature relative errors sum
 	lim = flim(epsrel)
@@ -96,16 +97,15 @@ def fit_bayes_1(f, x, y, dy, p0, dp0):
 
 	par = np.empty(len(p0))
 	for i in range(len(par)):
-		C = prod_dp0 / (N * p0[i])
 		def fint(*p):
 			p = np.array(p) * dp0 + p0
-			return p[i] * L(*p) * C
+			return p[i] * L(*p)
 		epsrel = 1 / np.sqrt(len(p0)) * relerr * dp0[i] / abs(p0[i])
 		lim = flim(epsrel)
 		start = time.time()
 		par[i], err, out = nquad(fint, [(-lim, lim)] * len(p0), opts=fopts(epsrel), full_output=True)
-		par[i] *= p0[i]
-		err *= p0[i]
+		par[i] /= N
+		err /= N
 		deltat = time.time() - start
 		
 		print('Average_%d = %s, lim: ±%.1f, epsrel: %.2g, neval: %d' % (i, lab.xe(par[i], err), lim, epsrel, out['neval']))
@@ -121,17 +121,15 @@ def fit_bayes_1(f, x, y, dy, p0, dp0):
 	cov = np.empty((len(par), len(par)))
 	for i in range(len(par)):
 		for j in range(i + 1):
-			C0 = dp0[i] * dp0[j]
-			C = prod_dp0 / (N * C0)
 			def fint(*p):
 				p = np.array(p) * dp0 + par
-				return (p[i] - par[i]) * (p[j] - par[j]) * L(*p) * C
+				return (p[i] - par[i]) * (p[j] - par[j]) * L(*p)
 			epsrel = 1 / np.sqrt(len(p0)) * relerr / sqrt(2)
 			lim = flim(epsrel)
 			start = time.time()
 			cov[i, j], err, out = nquad(fint, [(-lim, lim)] * len(p0), opts=fopts(epsrel), full_output=True)
-			cov[i, j] *= C0
-			err *= C0
+			cov[i, j] /= N
+			err /= N
 			deltat = time.time() - start
 			cov[j, i] = cov[i, j]
 			
