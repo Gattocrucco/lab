@@ -26,8 +26,8 @@ import scipy.linalg as la
 # 2) sampling furbo che spara N uniformi, se la varianza è ancora alta divide lungo x_0 e va avanti ricorsivo (ciclando x_1, x_2, etc altrimenti la suddivisione a cubetti porta un andamento esponenziale)
 # 3) impacchettare emcee (mi spaventa scegliere in automatico il burn-in)
 
-f = lambda x, a, b, c: a * x**2 + b * x + c
-p0 = (-1, -1, -1)#, -1)
+f = lambda x, a, b: a * x**2 + b * x
+p0 = (-1, -1)
 x = linspace(0, 1, 1000)
 dy = np.array([.05] * len(x))
 
@@ -67,8 +67,15 @@ def fit_bayes_1(f, x, y, dy, p0, cov0):
 	# 1/√2 because everything gets multiplied by normalization
 	relerr = 10 ** (-3/2) * 1/2 * 1/2 * 1/np.sqrt(2)
 	
-	# lim = 1 / sqrt(epsrel) # cebichev inequality
-	flim = lambda epsrel: abs(stats.norm.ppf(epsrel / 2))
+	def flim(epsrel):
+		radius = abs(stats.norm.ppf(epsrel / 2)) + 1
+		radius2 = radius ** 2
+		def lim_circle(*p):
+			x0 = np.sqrt(radius2 - np.sum(np.array(p)**2))
+			return (-x0, x0)
+		def lim_square(*p):
+			return (-radius, radius)
+		return [lim_circle] * len(p0)
 	fopts = lambda epsrel: dict(epsabs=0, epsrel=epsrel)
 	
 	idy2 = 1 / dy ** 2
@@ -93,10 +100,10 @@ def fit_bayes_1(f, x, y, dy, p0, cov0):
 	lim = flim(epsrel)
 	
 	start = time.time()
-	N, dN, out = nquad(fint, [(-lim, lim)] * len(p0), opts=fopts(epsrel), full_output=True)
+	N, dN, out = nquad(fint, lim, opts=fopts(epsrel), full_output=True)
 	deltat = time.time() - start
 	
-	print('Normalization = %s, lim: ±%.1f, epsrel: %.2g, neval: %d' % (lab.xe(N, dN), lim, epsrel, out['neval']))
+	print('Normalization = %s, epsrel: %.2g, neval: %d' % (lab.xe(N, dN), epsrel, out['neval']))
 
 	fa = linspace(-4, 4, 1000)
 	
@@ -116,6 +123,8 @@ def fit_bayes_1(f, x, y, dy, p0, cov0):
 	figure(1)
 	clf()
 	suptitle('Average and covariance')
+	
+	# AVERAGE
 
 	par = np.empty(len(p0))
 	for i in range(len(par)):
@@ -125,12 +134,12 @@ def fit_bayes_1(f, x, y, dy, p0, cov0):
 		epsrel = 1 / np.sqrt(len(p0)) * relerr * dp0[i] / abs(p0[i])
 		lim = flim(epsrel)
 		start = time.time()
-		par[i], err, out = nquad(fint, [(-lim, lim)] * len(p0), opts=fopts(epsrel), full_output=True)
+		par[i], err, out = nquad(fint, lim, opts=fopts(epsrel), full_output=True)
 		par[i] /= N
 		err /= N
 		deltat = time.time() - start
 		
-		print('Average_%d = %s, lim: ±%.1f, epsrel: %.2g, neval: %d' % (i, lab.xe(par[i], err), lim, epsrel, out['neval']))
+		print('Average_%d = %s, epsrel: %.2g, neval: %d' % (i, lab.xe(par[i], err), epsrel, out['neval']))
 		
 		subplot(len(p0), len(p0) + 1, i * (len(p0) + 1) + 1)
 		p = zeros(len(p0))
@@ -139,6 +148,8 @@ def fit_bayes_1(f, x, y, dy, p0, cov0):
 			return fint(*p)
 		plot(fa, [fplot(A) for A in fa], label='Time: %.3g s' % (deltat,))
 		legend()
+	
+	# COVARIANCE
 
 	cov = np.empty((len(par), len(par)))
 	for i in range(len(par)):
@@ -153,13 +164,13 @@ def fit_bayes_1(f, x, y, dy, p0, cov0):
 				epsabs = epsrel * dp0[i] * dp0[j]
 				epsrel = 0
 			start = time.time()
-			cov[i, j], err, out = nquad(fint, [(-lim, lim)] * len(p0), opts=dict(epsrel=epsrel, epsabs=epsabs), full_output=True)
+			cov[i, j], err, out = nquad(fint, lim, opts=dict(epsrel=epsrel, epsabs=epsabs), full_output=True)
 			cov[i, j] /= N
 			err /= N
 			deltat = time.time() - start
 			cov[j, i] = cov[i, j]
 			
-			print('Covariance_%d,%d = %s, lim: ±%.1f, epsrel: %.2g, epsabs: %.2g, neval: %d' % (i, j, lab.xe(cov[i, j], err), lim, epsrel, epsabs, out['neval']))
+			print('Covariance_%d,%d = %s, epsrel: %.2g, epsabs: %.2g, neval: %d' % (i, j, lab.xe(cov[i, j], err), epsrel, epsabs, out['neval']))
 		
 			subplot(len(p0), len(p0) + 1, i * (len(p0) + 1) + j + 2)
 			p = zeros(len(p0))
@@ -181,13 +192,11 @@ def fit_bayes_1(f, x, y, dy, p0, cov0):
 
 par, cov = lab.fit_generic(f, x, y, dy=dy, p0=p0)
 
-print(cov)
 print(lab.fit_norm_cov(cov))
 print(lab.xe(par, sqrt(diag(cov))))	
 
 par, cov = fit_bayes_1(f, x, y, dy, par, cov)
 
-print(cov)
 print(lab.fit_norm_cov(cov))
 print(lab.xe(par, sqrt(diag(cov))))	
 
