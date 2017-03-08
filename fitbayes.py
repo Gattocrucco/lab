@@ -14,10 +14,8 @@ import scipy.linalg as la
 # 2 parametri: 1 secondo
 # 3 parametri: 2 minuti
 # 4 parametri: non ci ho provato, 4 ore?
-# approssima tagliando gli estremi di integrazione (anche se nquad potrebbe integrare fino a ±∞), bisogna modificarlo in modo che il taglio segua la correlazione, quindi l'argomento dp0 va rimpiazzato con un covp0, al momento l'errore per difetto è talvolta visibile. si può anche diagonalizzare la covarianza per raddrizzare la scatola
 # l'np.array dentro fint non mi piace, e bisogna capire come scegliere epsrel / epsabs in modo più fino, queste cose richiedono di modificare nquad.
 # si può ancora guadagnare un fattore costante parallelizzando gli integrali, girando un po' le cose dovrebbero essere TUTTI indipendenti a meno di overflow
-# la posteriori iniziale non normalizzata mi sa che va in overflow con abbastanza dati, con 10000 ci sta ancora, con 100000 di punti non mi fiderei (questa cosa dovrei averla risolta)
 # bisogna poter dare i priori!
 # di sicuro questa funzione non va bene con gli errori sulle x perché lì ogni x è un parametro
 #
@@ -37,28 +35,31 @@ y = f(x, *p0) + randn(len(x)) * dy
 
 def diagonalize_cov(cov):
 	"""
-	returns V, A, V^{-1} with A diagonal such that VAV^{-1}=cov
+	returns V, A with A diagonal such that
+	V A V.T = cov
+	
+	other properties:
+	V A^(-1) V.T = cov^(-1)
+	p' = V.T p
+	p'.T A^(-1) p' = p.T cov^(-1) p
+	
 	cov must be symmetric!
+	
 	"""
 	w, V = la.eigh(cov)
 	
 	A = zeros((len(w), len(w)))
 	np.fill_diagonal(A, w)
-	# if len(w) == len(cov):
-	# 	V_1 = la.inv(V)
-	# else:
-	# 	V_1 = la.pinv(V)
-	V_1 = V.T
 	
-	return V, A, V_1
+	return V, A
 
 def fit_bayes_1(f, x, y, dy, p0, cov0):
 	p0 = asarray(p0)
 	cov0 = asarray(cov0)
 	
-	V, A, V_1 = diagonalize_cov(cov0)
+	V, A = diagonalize_cov(cov0)
 	dp0 = sqrt(diag(A))
-	p0 = V.dot(p0)
+	p0 = V.T.dot(p0)
 		
 	# 10^(-3/2) because we show errors with "1.5" digits
 	# 1/2 to round correctly
@@ -71,14 +72,14 @@ def fit_bayes_1(f, x, y, dy, p0, cov0):
 	fopts = lambda epsrel: dict(epsabs=0, epsrel=epsrel)
 	
 	idy2 = 1 / dy ** 2
-	chi20 = np.sum((y - f(x, *(V_1.dot(p0))))**2 * idy2)
+	chi20 = np.sum((y - f(x, *(V.dot(p0))))**2 * idy2)
 	def L(*p):
 		# must be centered around the maximum
 		# also we must be careful with overflow/underflow
 		# return np.exp(-0.5 * np.sum(((y - f(x, *p)) / dy)**2))
 		# return np.prod(np.exp(-((y - f(x, *p)) / dy)**2 / 2) / (np.sqrt(2 * np.pi) * dy))
 		# return np.exp((-np.sum(((y - f(x, *p)) / dy)**2) + len(x) - len(p0)) / 2)
-		return np.exp((-np.sum((y - f(x, *(V_1.dot(p))))**2 * idy2) + chi20) / 2)
+		return np.exp((-np.sum((y - f(x, *(V.dot(p))))**2 * idy2) + chi20) / 2)
 	
 	# NORMALIZATION
 	
@@ -97,7 +98,7 @@ def fit_bayes_1(f, x, y, dy, p0, cov0):
 	
 	print('Normalization = %s, lim: ±%.1f, epsrel: %.2g, neval: %d' % (lab.xe(N, dN), lim, epsrel, out['neval']))
 
-	fa = linspace(-3, 3, 1000)
+	fa = linspace(-4, 4, 1000)
 	
 	figure(0)
 	clf()
@@ -173,8 +174,8 @@ def fit_bayes_1(f, x, y, dy, p0, cov0):
 				plot(fa, [fplot(A, 1) for A in fa], label='Time: %.3g s' % (deltat,))
 				legend()
 	
-	par = V_1.dot(par)
-	cov = V_1.dot(cov).dot(V)
+	par = V.dot(par)
+	cov = V.dot(cov).dot(V.T)
 
 	return par, cov
 
