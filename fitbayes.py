@@ -15,6 +15,7 @@ import scipy.linalg as la
 # 3 parametri: 2 minuti
 # 4 parametri: non ci ho provato, 4 ore?
 # l'np.array dentro fint non mi piace, e bisogna capire come scegliere epsrel / epsabs in modo più fino, queste cose richiedono di modificare nquad.
+# integrare in coordinate sferiche?
 # si può ancora guadagnare un fattore costante parallelizzando gli integrali, girando un po' le cose dovrebbero essere TUTTI indipendenti a meno di overflow
 # bisogna poter dare i priori!
 # di sicuro questa funzione non va bene con gli errori sulle x perché lì ogni x è un parametro
@@ -32,6 +33,27 @@ x = linspace(0, 1, 1000)
 dy = np.array([.05] * len(x))
 
 y = f(x, *p0) + randn(len(x)) * dy
+
+def format_par_cov(par, cov):
+	pars = lab.xe(par, np.sqrt(np.diag(cov)))
+	corr = lab.fit_norm_cov(cov) * 100
+	corrwidth = 8
+	s = ''
+	for i in range(len(par)):
+		for j in range(len(par)):
+			width = max(corrwidth, len(pars[j])) + 1
+			if i == j:
+				sadd = pars[i]
+			elif i < j:
+				sadd = "%*.1f %%" % (corrwidth - 2, corr[i, j])
+			else:
+				sadd = ''
+			s += ' ' * (width - len(sadd)) + sadd
+			if j != len(par) - 1:
+				s += ' '
+			elif i != len(par) - 1:
+				s += '\n'
+	return s
 
 def diagonalize_cov(cov):
 	"""
@@ -192,12 +214,10 @@ def fit_bayes_1(f, x, y, dy, p0, cov0):
 
 par, cov = lab.fit_generic(f, x, y, dy=dy, p0=p0)
 
-print(lab.fit_norm_cov(cov))
-print(lab.xe(par, sqrt(diag(cov))))	
+print(format_par_cov(par, cov))
 
 par, cov = fit_bayes_1(f, x, y, dy, par, cov)
 
-print(lab.fit_norm_cov(cov))
-print(lab.xe(par, sqrt(diag(cov))))	
+print(format_par_cov(par, cov))
 
 show()
