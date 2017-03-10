@@ -31,8 +31,8 @@ class TestLab(unittest.TestCase):
 	
 	def test_fit_norm_cov(self):
 		# just check that it works because there's always someone willing to rewrite this stupid function
-		cov = [[4, 9], [-3, 16]]
-		normalized_cov = [[1, 1.125], [-0.375, 1]]
+		cov = [[4, -3], [-3, 16]]
+		normalized_cov = [[1, -0.375], [-0.375, 1]]
 		self.assertTrue(np.array_equal(lab.fit_norm_cov(cov), normalized_cov))
 
 if __name__ == '__main__':

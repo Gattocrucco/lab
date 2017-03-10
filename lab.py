@@ -4,10 +4,11 @@ import math
 import inspect
 import numpy as np
 import time
-from scipy import odr, optimize, stats, special
+from scipy import odr, optimize, stats, special, linalg
 import os
 import sympy
 from collections import Counter
+import numdifftools as nd
 
 # TODO
 #
@@ -41,6 +42,7 @@ from collections import Counter
 # se restart=True, ritorna l'oggetto ODR; se restart è un ODR, lo usa per ripartire da lì.
 # pfix = [True, False ...] i True vengono bloccati
 # pfix = [0, 3, 5...] i parametri a questi indici vengono bloccati
+# i bounds!
 
 __all__ = [ # things imported when you do "from lab import *"
 	'fit_norm_cov',
@@ -50,21 +52,22 @@ __all__ = [ # things imported when you do "from lab import *"
 	'util_mm_er',
 	'util_mm_list',
 	'mme',
-	'etastart',
-	'etastr',
 	'num2si',
 	'num2sup',
 	'num2sub',
 	'unicode_pm',
 	'xe',
 	'xep',
-	'util_format'
+	'util_format',
+	'Eta'
 ]
 
 # __all__ += [ # things for backward compatibility
 # 	'curve_fit_patched',
 # 	'fit_generic_xyerr',
-# 	'fit_generic_xyerr2'
+# 	'fit_generic_xyerr2',
+#	'etastart',
+#	'etastr'
 # ]
 
 __version__ = '2016.11'
@@ -86,9 +89,17 @@ def fit_norm_cov(cov):
 	ncov : (N,N)-shaped array-like
 		the normalized matrix
 	"""
-
+	cov = np.copy(np.asarray(cov, dtype='float64'))
 	s = np.sqrt(np.diag(cov))
-	return cov / np.outer(s, s)
+	for i in range(len(s)):
+		for j in range(i + 1):
+			p = s[i] * s[j]
+			if p != 0:
+				cov[i, j] /= p
+			elif i != j:
+				cov[i, j] = np.nan
+			cov[j, i] = cov[i, j]
+	return cov
 
 def _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=True, conv_diff=1e-7, max_cycles=5, **kw):
 	cycles = 1
@@ -539,7 +550,7 @@ def fit_const_yerr(y, sigmay):
 	vara = 1 / s1
 	return a, vara
 
-def fit_oversampling(data, digit=1, print_info=False):
+def fit_oversampling(data, digit=1, print_info=False, plot_axes=None):
 	"""
 	Given discretized samples, find the maximum likelihood estimate
 	of the average and standard deviation of a normal distribution.
@@ -555,47 +566,125 @@ def fit_oversampling(data, digit=1, print_info=False):
 		computing, then results are multiplied by digit.
 	print_info : boolean
 		If True, print verbose information about the fit.
+	plot_axes : Axes3DSubplot or None
+		If a 3D subplot is given, plot the likelihood around the estimate.
 	
 	Returns
 	-------
-	mean : float
-		Estimated average.
-	sigma : float
-		Estimated standard deviation.
+	par : 1D array
+		Estimated [mean, standard deviation].
+	cov : 2D array
+		Covariance matrix of the estimate.
 	"""
 	# TODO
-	# add covariance estimate to the result, OptimizeResult should contain hess_inv, then you have to discover factors.
+	# usare monte carlo per fare un fit bayesiano, se no qui non ci si salva
+	if print_info:
+		print('########################## FIT_OVERSAMPLING ##########################')
+		print()
+	
 	data = np.asarray(data) / digit
+	n = len(data)
+	
+	p0 = [data.mean(), data.std(ddof=1)]
+	if p0[1] == 0:
+		p0[1] = np.sqrt(n - 1) / n / 2
+	
+	data -= p0[0]
+	data /= p0[1]
+	hdigit = digit / p0[1] / 2
 	
 	c = Counter(data)
 	points = np.array(list(c.keys()), dtype='float64')
-	
-	if len(points) == 1:
-		if print_info:
-			print('Data contains only one distinguished value, skip fitting.')
-		return points[0], 0.0
-	
 	counts = np.array(list(c.values()), dtype='uint32')
-
-	p = np.empty(len(points))
-	n = counts.sum()
 	
-	factor = special.gammaln(1 + n) - np.sum(special.gammaln(1 + counts))
+	if print_info:
+		print('Number of data points: %d' % n)
+		print('Number of unique points: %d' % len(points))
+		print('Discretization unit: %.3g' % digit)
+		print('Sample mean: %.3g' % p0[0])
+		print('Sample standard deviation: %.3g' % (p0[1] if len(counts) > 1 else 0))
+		print()
+	
+	lp = np.empty(len(points))
+	
 	def minusloglikelihood(par):
 		mu, sigma = par
 		dist = stats.norm(loc=mu, scale=sigma)
-		for i in range(len(p)):
-			if points[i] > mu:
-				p[i] = dist.sf(points[i] - 0.5) - dist.sf(points[i] + 0.5)
+		for i in range(len(lp)):
+			x = points[i]
+			if x > mu:
+				p = dist.sf(x - hdigit) - dist.sf(x + hdigit)
 			else:
-				p[i] = dist.cdf(points[i] + 0.5) - dist.cdf(points[i] - 0.5)
-		return -(factor + np.sum(counts * np.log(p)))
+				p = dist.cdf(x + hdigit) - dist.cdf(x - hdigit)
+			if p == 0:
+				xd = np.abs(x - mu) - hdigit * 0.8
+				p = dist.logpdf(0.5 * (np.sign(xd) + 1) * xd * np.sign(x - mu))
+			else:
+				p = math.log(p)
+			lp[i] = p
+				
+		return -np.sum(counts * lp)# + np.log(sigma) # jeffreys' prior
 		
-	p0 = (data.mean(), data.std(ddof=1))
-	result = optimize.minimize(minusloglikelihood, p0, options=dict(disp=print_info), bounds=((p0[0] - .5, p0[0] + .5), (p0[1] / 2, None)))
-	mean, sigma = result.x * digit
+	result = optimize.minimize(minusloglikelihood, (0, 1), method='L-BFGS-B', options=dict(disp=print_info), bounds=((-hdigit, hdigit), (0.1, None)))
+	
+	if print_info:
+		print('###### MINIMIZATION FINISHED ######')
+		print()
+	
+	par = result.x
+	cov = nd.Hessian(minusloglikelihood, method='forward')(par)
+	try:
+		cov = linalg.inv(cov)
+	except linalg.LinAlgError:
+		if print_info:
+			print('Hessian is not invertible, computing pseudo-inverse')
+			print()
+		jac = nd.Jacobian(minusloglikelihood, method='forward')(par)
+		_, s, VT = linalg.svd(jac, full_matrices=False)
+		threshold = np.finfo(float).eps * max(jac.shape) * s[0]
+		s = s[s > threshold]
+		VT = VT[:s.size]
+		cov = np.dot(VT.T / s**2, VT)
+	
+	if not (plot_axes is None):
+		if print_info:
+			print('Plotting likelihood')
+			print()
+		plot_axes.cla()
+		factor = special.gammaln(1 + n) - np.sum(special.gammaln(1 + counts))
+		err = np.sqrt(abs(np.diag(cov)))
+		if len(counts) > 1:
+			x = np.linspace(max(-hdigit, par[0] - 2 * err[0]), min(hdigit, par[0] + 2 * err[0]), 41)
+			y = np.linspace(max(0.05, par[1] - 2 * err[1]), min(12, par[1] + 2 * err[1]), 39)
+		else:
+			x = np.linspace(-hdigit, hdigit, 41)
+			y = np.linspace(0.05, 12, 39)
+		X, Y = np.meshgrid(x, y)
+		plot_axes.plot_surface(X, Y, [[np.exp(factor - minusloglikelihood((X[i, j], Y[i, j]))) for j in range(len(X[0]))] for i in range(len(X))])
+		plot_axes.plot3D([par[0]], [par[1]], [np.exp(factor - minusloglikelihood(par))], 'ok')
+		plot_axes.set_xlabel('Mean')
+		plot_axes.set_ylabel('Sigma')
+		plot_axes.set_zlabel('Likelihood')
 
-	return mean, sigma
+	par *= p0[1]
+	par[0] += p0[0]
+	par *= digit
+	
+	cov *= p0[1] ** 2
+	cov *= digit ** 2
+	
+	if print_info:
+		print('###### SUMMARY ######')
+		print()
+		if len(counts) > 1:
+			print('Sample mean: %s' % xe(*p0))
+		else:
+			print('Sample mean: %.3g' % (p0[0],))
+		print('Sample standard deviation: %.3g' % (p0[1] if len(counts) > 1 else 0))
+		print('Estimated mean, standard deviation (with correlation):')
+		print(format_par_cov(par, cov))
+		
+	return par, cov
 
 # *********************** MULTIMETERS *************************
 
@@ -939,7 +1028,7 @@ def mme(x, unit, metertype='lab3', sqerr=False):
 
 d = lambda x, n: int(("%.*e" % (n - 1, abs(x)))[0])
 ap = lambda x, n: float("%.*e" % (n - 1, x))
-nd = lambda x: math.floor(math.log10(abs(x))) + 1
+_nd = lambda x: math.floor(math.log10(abs(x))) + 1
 def _format_epositive(x, e, errsep=True, minexp=3):
 	# DECIDE NUMBER OF DIGITS
 	if d(e, 2) < 3:
@@ -951,10 +1040,10 @@ def _format_epositive(x, e, errsep=True, minexp=3):
 	else:
 		n = 1
 	# FORMAT MANTISSAS
-	dn = int(nd(x) - nd(e)) if x != 0 else -n
+	dn = int(_nd(x) - _nd(e)) if x != 0 else -n
 	nx = n + dn
 	if nx > 0:
-		ex = nd(x) - 1
+		ex = _nd(x) - 1
 		if nx > ex and abs(ex) <= minexp:
 			xd = nx - ex - 1
 			ex = 0
@@ -963,14 +1052,14 @@ def _format_epositive(x, e, errsep=True, minexp=3):
 		sx = "%.*f" % (xd, x / 10**ex)
 		se = "%.*f" % (xd, e / 10**ex)
 	else:
-		le = nd(e)
+		le = _nd(e)
 		ex = le - n
 		sx = '0'
 		se = "%#.*g" % (n, e)
 	# RETURN
 	if errsep:
 		return sx, se, ex
-	return sx + '(' + ("%#.*g" % (n, e * 10 ** (n - nd(e))))[:n] + ')', '', ex
+	return sx + '(' + ("%#.*g" % (n, e * 10 ** (n - _nd(e))))[:n] + ')', '', ex
 
 def util_format(x, e, pm=None, percent=False, comexp=True, nicexp=False):
 	"""
@@ -1175,6 +1264,45 @@ def num2sup(x, format=None):
 	for i in range(len(_subscrc)):
 		x = x.replace(_subscrc[i], _supscr[i])
 	return x
+
+def format_par_cov(par, cov):
+	"""
+	Format an estimate with a covariance matrix as an upper
+	triangular matrix with parameters on the diagonal (with
+	uncertainties) and correlations off-diagonal.
+	
+	Parameters
+	----------
+	par : M-length array
+		Parameters to be written on the diagonal.
+	cov : (M, M) matrix
+		Covariance from which uncertainties and correlations
+		are computed.
+	
+	Examples
+	--------
+	>>> par, cov = curve_fit(f, x, y)
+	>>> print(lab.format_par_cov(par, cov))
+	"""
+	pars = xe(par, np.sqrt(np.diag(cov)))
+	corr = fit_norm_cov(cov) * 100
+	corrwidth = 8
+	s = ''
+	for i in range(len(par)):
+		for j in range(len(par)):
+			width = max(corrwidth, len(pars[j])) + 1
+			if i == j:
+				sadd = pars[i]
+			elif i < j:
+				sadd = "%*.1f %%" % (corrwidth - 2, corr[i, j])
+			else:
+				sadd = ''
+			s += ' ' * (width - len(sadd)) + sadd
+			if j != len(par) - 1:
+				s += ' '
+			elif i != len(par) - 1:
+				s += '\n'
+	return s
 
 # ************************** TIME *********************************
 
@@ -1414,4 +1542,3 @@ def etastr(eta, progress, mininterval=np.inf):
 	"""
 	eta.etaprint(progress, mininterval=mininterval)
 	return util_timestr(time.time() - eta._start_time), eta.etastr(progress)
-

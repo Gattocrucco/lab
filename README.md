@@ -6,6 +6,6 @@ Piccolo modulo con funzioni python per il laboratorio di fisica:
 * formattazione numeri con incertezze
 * calcolo errore dei multimetri
 
-Requisiti: **scipy**, **sympy**
+Requisiti: **scipy**, sympy, numdifftools, matplotlib
 
 **NON TESTATO SU PYTHON 2**
