@@ -191,6 +191,50 @@ def fit_bayes_1(f, x, y, dy, p0, cov0):
 
 	return par, cov
 
+def mc_integrator(f_over_dist, dist_sampler, epsrel=1e-4, epsabs=1e-4, start_n=10000, max_bunch=10000000, print_info=True):
+	summ = 0.0
+	sum2 = 0.0
+	i = 0
+	n = 0
+	while True:
+		if i == 0:
+			dn = start_n
+			if print_info:
+				print('################ mc_integrator ################')
+				print()
+				print('epsrel = %.2g' % epsrel)
+				print('epsabs = %.2g' % epsabs)
+				print()
+				print('***** Cycle %d *****' % i)
+				print('Generating start_n = %d samples' % start_n)
+		else:
+			target_error = epsabs + I * epsrel
+			target_n = int((DI / target_error) ** 2 * n)
+			dn = min(target_n - n, max_bunch)
+			if print_info:
+				print()
+				print('***** Cycle %d *****' % i)
+				print('Estimated necessary samples = %d' % target_n)
+				print('Generating %d more samples (max = %d)' % (dn, max_bunch))
+		sample = dist_sampler(dn)
+		n += dn
+		y = f_over_dist(sample)
+		summ += np.sum(y, axis=0)
+		sum2 += np.sum(y ** 2, axis=0)
+		I = summ / n
+		DI = np.sqrt((sum2 - summ**2 / n) / (n * (n-1)))
+		if print_info:
+			print('Result with %d samples:' % n)
+			print('I = %s  (I = %g, DI = %g)' % (lab.xe(I, DI), I, DI))
+		if all(DI < epsrel * I + epsabs):
+			if print_info:
+				print('Termination condition DI < epsrel * I + epsabs satisfied.')
+				print()
+				print('############## END mc_integrator ##############')
+			break
+		i += 1
+	return I, DI
+
 def fit_bayes_2(f, x, y, dy, p0, cov0):
 	"""
 	use MC integrals
@@ -206,22 +250,18 @@ def fit_bayes_2(f, x, y, dy, p0, cov0):
 	# 2 because variance = std ** 2
 	var_relerr = std_relerr * 2
 	
-	# target relative error on computed averages
+	# target absolute error on computed averages
 	# align with error on standard deviations, based on initial estimate
-	# ASSUMES all(p0 != 0)
-	avg_relerr = std_relerr * dp0 / np.abs(p0)
+	avg_abserr = std_relerr * np.sqrt(np.diag(cov0))
 	
 	# target relative error on correlations
-	# 1/1000 because they are written in xx.x %
+	# 1/1000 because they are written like xx.x %
 	# 1/3 to round correctly
 	cor_relerr = 1/1000 * 1/3
 	
 	# target absolute error on covariance matrix
 	cov_abserr = cov0 * cor_relerr
 	np.fill_diagonal(cov_abserr, np.diag(cov0) * var_relerr)
-	
-	# target absolute error on averages
-	avg_abserr = np.abs(p0) * avg_relerr
 	
 	# VARIABLE TRANSFORM AND LIKELIHOOD
 	
@@ -232,35 +272,42 @@ def fit_bayes_2(f, x, y, dy, p0, cov0):
 	cov_abserr = np.sqrt(V.T.dot(cov_abserr ** 2).dot(V))
 	avg_abserr = np.sqrt(V.T.dot(avg_abserr ** 2))
 	
-	# likelihood (not normalized)
 	# change variable: p0 -> 0, dp0 -> 1
+	M = dp0
+	Q = p0
+	dp0 = np.ones(len(p0))
+	p0 = np.zeros(len(p0))
+	cov_abserr /= np.outer(M, M)
+	avg_abserr /= M
+
+	# likelihood (not normalized)
 	idy2 = 1 / dy ** 2 # just for efficiency
-	chi20 = np.sum((y - f(x, *(V.dot(p0))))**2 * idy2) # initial normalization with L(0) == 1
+	chi20 = np.sum((y - f(x, *(V.dot(M * 0 + Q))))**2 * idy2) # initial normalization with L(0) == 1
 	def L(p):
-		return np.exp((-np.sum((y - f(x, *(V.dot(p * dp0 + p0))))**2 * idy2) + chi20) / 2)
-	
+		return np.exp((-np.sum((y - f(x, *(V.dot(M * p + Q))))**2 * idy2) + chi20) / 2)
+		
 	# TARGET ERRORS FOR COMPUTING
 	
+	# target relative error on variance integrals
 	# 1/2 because the are two sources of error: 1. MC (statistical) 2. domain cut (sistematic)
 	# 1/√2 because normalization is multiplied by everything
+	int_var_relerr = np.diag(cov_abserr) / dp0**2 * 1/2 * 1/np.sqrt(2)
 	
 	# target relative error on normalization integral
-	# match mininum relative error
-	int_nor_relerr = min(np.diag(cov_abserr) / dp0) * 1/2 * 1/np.sqrt(2)
+	# match mininum relative error on variances
+	int_nor_relerr = min(int_var_relerr)
 
-	# target relative error on variance integrals
-	int_var_relerr = np.diag(cov_abserr) / dp0 * 1/2 * 1/np.sqrt(2)
-	
 	# target absolute error on average integrals
 	int_avg_abserr = avg_abserr
 	
 	# target absolute error on covariance integrals
-	int_cov_abserr = cov_abserr
+	int_cov_abserr = np.copy(cov_abserr)
 	np.fill_diagonal(int_cov_abserr, np.nan)
 	
 	# NORMALIZATION
 	
-	radius = abs(stats.norm.ppf(epsrel / 2)) + 1
+	radius = abs(stats.norm.ppf(int_nor_relerr / 2))
+	bounds = [(-radius, radius)] * len(p0)
 	
 	start = time.time()
 	N, dN, out = integrate.nquad(fint, lim, opts=fopts(epsrel), full_output=True)
@@ -353,12 +400,12 @@ def fit_bayes_2(f, x, y, dy, p0, cov0):
 
 	return par, cov
 
-par, cov = lab.fit_generic(f, x, y, dy=dy, p0=p0)
-
-print(lab.format_par_cov(par, cov))
-
-par, cov = fit_bayes_1(f, x, y, dy, par, cov)
-
-print(lab.format_par_cov(par, cov))
-
-show()
+# par, cov = lab.fit_generic(f, x, y, dy=dy, p0=p0)
+#
+# print(lab.format_par_cov(par, cov))
+#
+# par, cov = fit_bayes_1(f, x, y, dy, par, cov)
+#
+# print(lab.format_par_cov(par, cov))
+#
+# show()
