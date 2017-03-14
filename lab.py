@@ -675,11 +675,7 @@ def fit_oversampling(data, digit=1, print_info=False, plot_axes=None):
 	
 	if print_info:
 		print('###### SUMMARY ######')
-		print()
-		if len(counts) > 1:
-			print('Sample mean: %s' % xe(*p0))
-		else:
-			print('Sample mean: %.3g' % (p0[0],))
+		print('Sample mean: %.3g' % p0[0])
 		print('Sample standard deviation: %.3g' % (p0[1] if len(counts) > 1 else 0))
 		print('Estimated mean, standard deviation (with correlation):')
 		print(format_par_cov(par, cov))
