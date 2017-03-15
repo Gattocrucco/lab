@@ -235,6 +235,54 @@ def mc_integrator(f_over_dist, dist_sampler, epsrel=1e-4, epsabs=1e-4, start_n=1
 		i += 1
 	return I, DI
 
+def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print_info=True, max_cycles=20):
+	if print_info:
+		print('############### mc_integrator_2 ###############')
+		print()
+		print('integrand = ', f)
+		print('bounds = ', bounds)
+		print('epsrel = %.3g' % epsrel)
+		print('epsabs = %.3g' % epsabs)
+	integ = vegas.Integrator(bounds)
+	neval = start_neval
+	total_neval = 0
+	I = None
+	for i in range(1, 1 + max_cycles):
+		nitn = 10 if i == 1 else 5
+		if print_info:
+			print()
+			print('***** Cycle %d *****' % i)
+			print('Integrating with neval=%d, nitn=%d' % (neval, nitn))
+		result = integ(f, nitn=nitn, neval=neval)
+		Is = np.array(result.itn_results).flatten()
+		new_I = sum([J / J.var for J in Is]) / sum([1 / J.var for J in Is])
+		chi2 = sum([(J.mean - new_I.mean)**2 / J.var for J in Is])
+		Q = stats.chi2.sf(chi2, len(Is) - 1)
+		if print_info:
+			print(result.summary())
+		if Q < 0.05:
+			if print_info:
+				print('Q = %.2g < 0.05, repeating cycle.' % Q)
+			continue
+		I = (I/I.var + new_I/new_I.var) / (1/I.var + 1/new_I.var) if not (I is None) else new_I
+		total_neval += neval
+		if print_info:
+			print('from this cycle:  I = {}'.format(new_I))
+			print('weighted average: I = {}'.format(I))
+			print('                 DI = %.6g' % I.sdev)
+			print('epsrel * I + epsabs = %.6g' % (epsrel * I.mean + epsabs))
+		if I.sdev < epsrel * I.mean + epsabs:
+			if print_info:
+				print('Termination condition DI < epsrel * I + epsabs satisfied.')
+				print()
+				print('############# END mc_integrator_2 #############')
+			break
+		target_error = epsabs + I.mean * epsrel
+		target_total_neval = int((I.sdev / target_error) ** 2 * total_neval)
+		target_neval = target_total_neval - total_neval
+		neval = max(neval, min(neval * 4, target_neval))
+	return I
+
 def fit_bayes_2(f, x, y, dy, p0, cov0):
 	"""
 	use MC integrals
