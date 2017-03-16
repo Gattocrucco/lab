@@ -235,18 +235,21 @@ def mc_integrator(f_over_dist, dist_sampler, epsrel=1e-4, epsabs=1e-4, start_n=1
 		i += 1
 	return I, DI
 
-def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print_info=True, max_cycles=20):
+def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print_info=True, max_cycles=20, target=lambda I: I):
 	if print_info:
 		print('############### mc_integrator_2 ###############')
 		print()
-		print('integrand = ', f)
-		print('bounds = ', bounds)
-		print('epsrel = %.3g' % epsrel)
-		print('epsabs = %.3g' % epsabs)
+		print('integrand = {}'.format(f))
+		print('bounds = {}'.format(bounds))
+		print('epsrel = {}'.format(epsrel))
+		print('epsabs = {}'.format(epsabs))
+	epsrel = np.asarray(epsrel)
+	epsabs = np.asarray(epsabs)
 	integ = vegas.Integrator(bounds)
 	neval = start_neval
 	total_neval = 0
 	I = None
+	tI = None
 	for i in range(1, 1 + max_cycles):
 		nitn = 10 if i == 1 else 5
 		if print_info:
@@ -254,34 +257,42 @@ def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print
 			print('***** Cycle %d *****' % i)
 			print('Integrating with neval=%d, nitn=%d' % (neval, nitn))
 		result = integ(f, nitn=nitn, neval=neval)
-		Is = np.array(result.itn_results).flatten()
-		new_I = sum([J / J.var for J in Is]) / sum([1 / J.var for J in Is])
-		chi2 = sum([(J.mean - new_I.mean)**2 / J.var for J in Is])
-		Q = stats.chi2.sf(chi2, len(Is) - 1)
+		Is = np.array(result.itn_results)
+		if len(Is.shape) == 1:
+			Is = Is.reshape((len(Is), 1))
+		new_I = [sum([J / J.var for J in Is[:,j]]) / sum([1 / J.var for J in Is[:,j]]) for j in range(Is.shape[1])]
+		chi2 = sum([sum([(J.mean - new_I[j].mean)**2 / J.var for J in Is[:,j]]) for j in range(Is.shape[1])])
+		Q = stats.chi2.sf(chi2, (Is.shape[0] - 1) * Is.shape[1])
 		if print_info:
 			print(result.summary())
 		if Q < 0.05:
 			if print_info:
 				print('Q = %.2g < 0.05, repeating cycle.' % Q)
 			continue
-		I = (I/I.var + new_I/new_I.var) / (1/I.var + 1/new_I.var) if not (I is None) else new_I
+		I = [(I[j]/I[j].var + new_I[j]/new_I[j].var) / (1/I[j].var + 1/new_I[j].var) for j in range(Is.shape[1])] if not (I is None) else new_I
 		total_neval += neval
+		tI = target(I)
+		current_error = np.array([Ij.sdev for Ij in tI])
+		if len(tI) < len(np.atleast_1d(epsrel)) or len(tI) < len(np.atleast_1d(epsabs)):
+			raise ValueError('Length of target values less than length of target errors.')
+		target_error = epsrel * np.array([Ij.mean for Ij in tI]) + epsabs
 		if print_info:
-			print('from this cycle:  I = {}'.format(new_I))
-			print('weighted average: I = {}'.format(I))
-			print('                 DI = %.6g' % I.sdev)
-			print('epsrel * I + epsabs = %.6g' % (epsrel * I.mean + epsabs))
-		if I.sdev < epsrel * I.mean + epsabs:
+			tnI = target(new_I)
+			print('from this cycle:  I = {}'.format(tnI if len(tnI) > 1 else tnI[0]))
+			print('weighted average: I = {}'.format(tI if len(tI) > 1 else tI[0]))
+			print('                 DI = {}'.format(current_error))
+			print('epsrel * I + epsabs = {}'.format(target_error))
+		if all(current_error <= target_error):
 			if print_info:
-				print('Termination condition DI < epsrel * I + epsabs satisfied.')
-				print()
-				print('############# END mc_integrator_2 #############')
+				print('Termination condition DI <= epsrel * I + epsabs satisfied.')
 			break
-		target_error = epsabs + I.mean * epsrel
-		target_total_neval = int((I.sdev / target_error) ** 2 * total_neval)
+		target_total_neval = int(np.max(np.round((current_error / target_error) ** 2 * total_neval)))
 		target_neval = target_total_neval - total_neval
 		neval = max(neval, min(neval * 4, target_neval))
-	return I
+	if print_info:
+		print()
+		print('############# END mc_integrator_2 #############')
+	return tI if tI is None or len(tI) > 1 else tI[0]
 
 def fit_bayes_2(f, x, y, dy, p0, cov0):
 	"""
