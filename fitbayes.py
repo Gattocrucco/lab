@@ -350,7 +350,7 @@ def fit_bayes_2(f, x, y, dy, p0, cov0):
 	# target relative error on variance integrals
 	# 1/2 because the are two sources of error: 1. MC (statistical) 2. domain cut (sistematic)
 	# 1/√2 because normalization is multiplied by everything
-	int_var_relerr = np.diag(cov_abserr) / dp0**2 * 1/2 * 1/np.sqrt(2)
+	int_var_relerr = np.diag(cov_abserr) / dp0**2# * 1/2 * 1/np.sqrt(2)
 	
 	# target relative error on normalization integral
 	# match mininum relative error on variances
@@ -363,100 +363,22 @@ def fit_bayes_2(f, x, y, dy, p0, cov0):
 	int_cov_abserr = np.copy(cov_abserr)
 	np.fill_diagonal(int_cov_abserr, np.nan)
 	
-	# NORMALIZATION
+	# INTEGRALS
 	
-	radius = abs(stats.norm.ppf(int_nor_relerr / 2))
-	bounds = [(-radius, radius)] * len(p0)
+	# integrand: [L, p0 * L, ..., p0 * p0 * L, p0 * p1 * L, ..., p0 * pd * L, p1 * p1 * L, ...]
+	# change of variable: p = 2 * tan(theta), theta in (-pi/2, pi/2)
+	bounds = [(-np.pi/2, np.pi/2)] * len(p0)
+	def integrand(theta):
+		t = np.tan(theta)
+		p = 2 * t
+		l = 2 * (1 + t ** 2) * L(p)
+		pcl = np.outer(p, p) * l
+		return np.concatenate((l, p * l, (np.outer(p, p) * l)[np.triu_indices(len(p))]))
 	
-	start = time.time()
-	N, dN, out = integrate.nquad(fint, lim, opts=fopts(epsrel), full_output=True)
-	deltat = time.time() - start
-	
-	print('Normalization = %s, epsrel: %.2g, neval: %d' % (lab.xe(N, dN), epsrel, out['neval']))
-
-	fa = linspace(-4, 4, 1000)
-	
-	figure(0)
-	clf()
-	suptitle('Normalization')
-	for i in range(len(p0)):
-		subplot(len(p0), 1, i + 1)
-		p = zeros(len(p0))
-		def fplot(pi):
-			p[i] = pi
-			return L(p)
-		plot(fa, [fplot(A) for A in fa], label='Time: %.3g s' % (deltat,))
-		if i == 0:
-			legend()
-	
-	figure(1)
-	clf()
-	suptitle('Average and covariance')
-	
-	# AVERAGE
-
-	par = np.empty(len(p0))
-	for i in range(len(par)):
-		def fint(*p):
-			p = np.array(p) * dp0 + p0
-			return p[i] * L(*p)
-		epsrel = 1 / np.sqrt(len(p0)) * relerr * dp0[i] / abs(p0[i])
-		lim = flim(epsrel)
-		start = time.time()
-		par[i], err, out = integrate.nquad(fint, lim, opts=fopts(epsrel), full_output=True)
-		par[i] /= N
-		err /= N
-		deltat = time.time() - start
+	# takes the integration result and computes average and covariance dividing by normalization
+	def target(I):
+		pass
 		
-		print('Average_%d = %s, epsrel: %.2g, neval: %d' % (i, lab.xe(par[i], err), epsrel, out['neval']))
-		
-		subplot(len(p0), len(p0) + 1, i * (len(p0) + 1) + 1)
-		p = zeros(len(p0))
-		def fplot(pi):
-			p[i] = pi
-			return fint(*p)
-		plot(fa, [fplot(A) for A in fa], label='Time: %.3g s' % (deltat,))
-		legend()
-	
-	# COVARIANCE
-
-	cov = np.empty((len(par), len(par)))
-	for i in range(len(par)):
-		for j in range(i + 1):
-			def fint(*p):
-				p = np.array(p) * dp0 + par
-				return (p[i] - par[i]) * (p[j] - par[j]) * L(*p)
-			epsrel = 1 / np.sqrt(len(p0)) * relerr * np.sqrt(2)
-			epsabs = 0
-			lim = flim(epsrel)
-			if i != j:
-				epsabs = epsrel * dp0[i] * dp0[j]
-				epsrel = 0
-			start = time.time()
-			cov[i, j], err, out = integrate.nquad(fint, lim, opts=dict(epsrel=epsrel, epsabs=epsabs), full_output=True)
-			cov[i, j] /= N
-			err /= N
-			deltat = time.time() - start
-			cov[j, i] = cov[i, j]
-			
-			print('Covariance_%d,%d = %s, epsrel: %.2g, epsabs: %.2g, neval: %d' % (i, j, lab.xe(cov[i, j], err), epsrel, epsabs, out['neval']))
-		
-			subplot(len(p0), len(p0) + 1, i * (len(p0) + 1) + j + 2)
-			p = zeros(len(p0))
-			def fplot(pij, sign):
-				p[i] = pij
-				p[j] = sign * pij
-				return fint(*p)
-			plot(fa, [fplot(A, -1) for A in fa], label='Time: %.3g s' % (deltat,))
-			legend()
-			if i != j:
-				subplot(len(p0), len(p0) + 1, j * (len(p0) + 1) + i + 2)
-				plot(fa, [fplot(A, 1) for A in fa], label='Time: %.3g s' % (deltat,))
-				legend()
-	
-	par = V.dot(par)
-	cov = V.dot(cov).dot(V.T)
-
 	return par, cov
 
 # par, cov = lab.fit_generic(f, x, y, dy=dy, p0=p0)
