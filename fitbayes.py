@@ -1,10 +1,9 @@
 import numpy as np
-from pylab import *
 import lab
 import time
 from scipy import stats, linalg, integrate
 import vegas
-import matplotlib.pyplot as plt
+from matplotlib import gridspec, pyplot
 
 # TODO/NOTE
 #
@@ -29,10 +28,10 @@ import matplotlib.pyplot as plt
 
 f = lambda x, a, b: a * x**2 + b * x
 p0 = (-1, -1)
-x = linspace(0, 1, 1000)
+x = np.linspace(0, 1, 1000)
 dy = np.array([.05] * len(x))
 
-y = f(x, *p0) + randn(len(x)) * dy
+y = f(x, *p0) + np.random.randn(len(x)) * dy
 
 def diagonalize_cov(cov):
 	"""
@@ -294,10 +293,22 @@ def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print
 		print('############# END mc_integrator_2 #############')
 	return tI if tI is None or len(tI) > 1 else tI[0]
 
-def fit_bayes_2(f, x, y, dy, p0, cov0):
+def fit_bayes_2(f, x, y, dy, p0, cov0, print_info=False, plot_figure=None):
 	"""
 	use MC integrals
 	"""
+	if print_info:
+		print('################# fit_bayes_2 #################')
+		print()
+		print('f = {}'.format(f))
+		print('x.shape = {}'.format(x.shape))
+		print('y.shape = {}'.format(y.shape))
+		print('dy.shape = {}'.format(dy.shape))
+		print()
+		print('Starting estimate of parameters:')
+		print(lab.format_par_cov(par0, cov0))
+		print()
+		
 	# TARGET ERRORS FOR RESULTS
 	
 	# target relative error on computed standard deviations
@@ -319,8 +330,15 @@ def fit_bayes_2(f, x, y, dy, p0, cov0):
 	cor_relerr = 1/1000 * 1/3
 	
 	# target absolute error on covariance matrix
-	cov_abserr = cov0 * cor_relerr
+	cov_abserr = np.abs(cov0) * cor_relerr # is this right??
 	np.fill_diagonal(cov_abserr, np.diag(cov0) * var_relerr)
+	
+	if print_info:
+		print('Target relative error on variances = %.3g' % var_relerr)
+		print('Target relative error on correlations = %.3g' % cor_relerr)
+		print('Target absolute error on averages:\n{}'.format(avg_abserr))
+		print('Target absolute error on covariance matrix:\n{}'.format(cov_abserr))
+		print()
 	
 	# VARIABLE TRANSFORM AND LIKELIHOOD
 	
@@ -328,9 +346,19 @@ def fit_bayes_2(f, x, y, dy, p0, cov0):
 	w, V = linalg.eigh(cov0)
 	dp0 = np.sqrt(w)
 	p0 = V.T.dot(p0)
-	cov_abserr = np.sqrt(V.T.dot(cov_abserr ** 2).dot(V))
-	avg_abserr = np.sqrt(V.T.dot(avg_abserr ** 2))
+	cov_abserr = np.sqrt(np.abs(V.T.dot(cov_abserr ** 2).dot(V)))
+	avg_abserr = np.sqrt(np.abs(V.T.dot(avg_abserr ** 2)))
 	
+	if print_info:
+		print('Diagonalized starting estimate of parameters:')
+		print(lab.xe(p0, dp0))
+		print()
+		print('Diagonalized target absolute error on averages:')
+		print(avg_abserr)
+		print('Diagonalized target absolute error on covariance matrix:')
+		print(cov_abserr)
+		print()
+		
 	# change variable: p0 -> 0, dp0 -> 1
 	M = dp0
 	Q = p0
@@ -338,55 +366,148 @@ def fit_bayes_2(f, x, y, dy, p0, cov0):
 	p0 = np.zeros(len(p0))
 	cov_abserr /= np.outer(M, M)
 	avg_abserr /= M
+	
+	if print_info:
+		print('Normalized target absolute error on averages:')
+		print(avg_abserr)
+		print('Normalized target absolute error on covariance matrix:')
+		print(cov_abserr)
+		print()
 
 	# likelihood (not normalized)
 	idy2 = 1 / dy ** 2 # just for efficiency
 	chi20 = np.sum((y - f(x, *(V.dot(M * 0 + Q))))**2 * idy2) # initial normalization with L(0) == 1
 	def L(p):
 		return np.exp((-np.sum((y - f(x, *(V.dot(M * p + Q))))**2 * idy2) + chi20) / 2)
-		
+	
 	# TARGET ERRORS FOR COMPUTING
 	
 	# target relative error on variance integrals
 	# 1/2 because the are two sources of error: 1. MC (statistical) 2. domain cut (sistematic)
 	# 1/√2 because normalization is multiplied by everything
-	int_var_relerr = np.diag(cov_abserr) / dp0**2# * 1/2 * 1/np.sqrt(2)
+	int_var_relerr = np.diag(cov_abserr) / dp0**2 / 2# * 1/2 * 1/np.sqrt(2)
 	
 	# target relative error on normalization integral
 	# match mininum relative error on variances
 	int_nor_relerr = min(int_var_relerr)
 
 	# target absolute error on average integrals
-	int_avg_abserr = avg_abserr
+	int_avg_abserr = avg_abserr / 2
 	
 	# target absolute error on covariance integrals
-	int_cov_abserr = np.copy(cov_abserr)
-	np.fill_diagonal(int_cov_abserr, np.nan)
+	int_cov_abserr = np.copy(cov_abserr) / 2
+	np.fill_diagonal(int_cov_abserr, 0)
 	
 	# INTEGRALS
 	
-	# integrand: [L, p0 * L, ..., p0 * p0 * L, p0 * p1 * L, ..., p0 * pd * L, p1 * p1 * L, ...]
+	# integrand: [L, p0 * L, ..., pd * L, p0 * p0 * L, p0 * p1 * L, ..., p0 * pd * L, p1 * p1 * L, ..., pd * pd * L]
 	# change of variable: p = 2 * tan(theta), theta in (-pi/2, pi/2)
 	bounds = [(-np.pi/2, np.pi/2)] * len(p0)
+	idxs = np.triu_indices(len(p0))
 	def integrand(theta):
 		t = np.tan(theta)
 		p = 2 * t
 		l = 2 * (1 + t ** 2) * L(p)
-		pcl = np.outer(p, p) * l
-		return np.concatenate((l, p * l, (np.outer(p, p) * l)[np.triu_indices(len(p))]))
+		return np.concatenate((l, p * l, (np.outer(p, p) * l)[idxs]))
+	
+	# figure showing sections of the integrand
+	if not (plot_figure is None):
+		plot_figure.set_tight_layout(True)
+		G = gridspec.GridSpec(len(p0), len(p0) + 2)
+		eps = 1e-4
+		xs = np.linspace(-np.pi/2 + eps, np.pi/2 - eps, 256)
+		
+		for i in range(len(p0)):
+			axes = plot_figure.add_subplot(G[i, 0])
+			theta = np.zeros(len(p0))
+			def fplot(theta_i):
+				theta[i] = theta_i
+				return integrand(theta)[0]
+			axes.plot(xs, [fplot(x) for x in xs], '-k', label=R'$L$ along $p_{%d}$' % (i))
+			axes.legend(loc=1)
+
+		for i in range(len(p0)):
+			axes = plot_figure.add_subplot(G[i, 1])
+			theta = np.zeros(len(p0))
+			def fplot(theta_i):
+				theta[i] = theta_i
+				return integrand(theta)[1 + i]
+			axes.plot(xs, [fplot(x) for x in xs], '-k', label=R'$p_{%d}\cdot L$ along $p_{%d}$' % (i, i))
+			axes.legend(loc=1)
+		
+		mat = np.empty(cov0.shape, dtype='uint32')
+		mat[idxs] = np.arange(len(idxs[0]))
+		for i in range(len(p0)):
+			for j in range(i, len(p0)):
+				theta = np.zeros(len(p0))
+				if i == j:
+					axes = plot_figure.add_subplot(G[i, i + 2])
+					def fplot(theta_i):
+						theta[i] = theta_i
+						return integrand(theta)[1 + len(p0) + mat[i, i]]
+					axes.plot(xs, [fplot(x) for x in xs], '-k', label=R'$p_{%d}^2\cdot L$ along $p_{%d}$' % (i, i))
+					axes.legend(loc=1)
+				else: # i != j
+					def fplot_p(theta_ij):
+						theta[i] = theta_ij
+						theta[j] = theta_ij
+						return integrand(theta)[1 + len(p0) + mat[i, j]]
+					def fplot_m(theta_ij):
+						theta[i] = theta_ij
+						theta[j] = -theta_ij
+						return integrand(theta)[1 + len(p0) + mat[i, j]]
+					axes = plot_figure.add_subplot(G[i, j + 2])
+					axes.plot(xs, [fplot_p(x) for x in xs], '-k', label=R'$p_{%d}\cdot p_{%d}\cdot L$ along $p_{%d}=p_{%d}$' % (i, j, i, j))
+					axes.legend(loc=1)
+					axes = plot_figure.add_subplot(G[j, i + 2])
+					axes.plot(xs, [fplot_m(x) for x in xs], '-k', label=R'$p_{%d}\cdot p_{%d}\cdot L$ along $p_{%d}=-p_{%d}$' % (i, j, i, j))
+					axes.legend(loc=1)
 	
 	# takes the integration result and computes average and covariance dividing by normalization
 	def target(I):
-		pass
+		out1 = [I[j] / I[0] for j in range(1, len(p0) + 1)]
+		out2 = [(I[j + len(p0) + 1] - I[idxs[0][j] + 1] * I[idxs[1][j] + 1]) / I[0] for j in range(len(idxs[0]))]
+		return out1 + out2
+	
+	epsrel = np.zeros(cov0.shape)
+	epsrel[np.diag_indices(len(p0))] = int_var_relerr
+	epsrel = np.concatenate((np.zeros(len(p0)), epsrel[idxs]))
+	
+	epsabs = np.copy(int_cov_abserr)
+	epsabs = np.concatenate((int_avg_abserr, epsabs[idxs]))
+	
+	I = mc_integrator_2(integrand, bounds, target=target, epsrel=epsrel, epsabs=epsabs, print_info=print_info)
+	
+	par = I[:len(p0)]
+	cov = np.empty(cov0.shape)
+	cov[idxs] = I[len(p0):]
+	cov.T[idxs] = cov[idxs]
+	
+	if print_info:
+		print('Normalized result:')
+		print(lab.format_par_cov(par, cov))
+		print()
 		
+	# INVERSE VARIABLE TRANSFORM
+	
+	par = V.dot(M * par + Q)
+	cov = V.dot(np.outer(M, M) * cov).dot(V.T)
+	
+	if print_info:
+		print('Result:')
+		print(lab.format_par_cov(par, cov))
+		print('############### END fit_bayes_2 ###############')
+	
 	return par, cov
 
-# par, cov = lab.fit_generic(f, x, y, dy=dy, p0=p0)
-#
-# print(lab.format_par_cov(par, cov))
-#
-# par, cov = fit_bayes_1(f, x, y, dy, par, cov)
-#
-# print(lab.format_par_cov(par, cov))
-#
-# show()
+par0, cov0 = lab.fit_generic(f, x, y, dy=dy, p0=p0)
+
+fig = pyplot.figure('fitbayes')
+fig.clf()
+
+par, cov = fit_bayes_2(f, x, y, dy, par0, cov0, print_info=True, plot_figure=fig)
+
+print(lab.format_par_cov(par0, cov0))
+print(lab.format_par_cov(par, cov))
+
+show()
