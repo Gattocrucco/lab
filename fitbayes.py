@@ -26,13 +26,6 @@ from matplotlib import gridspec, pyplot
 # 2) sampling furbo che spara N uniformi, se la varianza è ancora alta divide lungo x_0 e va avanti ricorsivo (ciclando x_1, x_2, etc altrimenti la suddivisione a cubetti porta un andamento esponenziale)
 # 3) impacchettare emcee (mi spaventa scegliere in automatico il burn-in)
 
-f = lambda x, a, b: a * x**2 + b * x
-p0 = (-1, -1)
-x = np.linspace(0, 1, 1000)
-dy = np.array([.05] * len(x))
-
-y = f(x, *p0) + np.random.randn(len(x)) * dy
-
 def diagonalize_cov(cov):
 	"""
 	returns V, A with A diagonal such that
@@ -313,8 +306,8 @@ def fit_bayes_2(f, x, y, dy, p0, cov0, print_info=False, plot_figure=None):
 	
 	# target relative error on computed standard deviations
 	# 10^(-3/2) because we show errors with "1.5" digits
-	# 1/3 to round correctly
-	std_relerr = 10 ** (-3/2) * 1/3
+	# 1/2.1 to round correctly
+	std_relerr = 10 ** (-3/2) * 1/2.1
 	
 	# target relative error on computed variances
 	# 2 because variance = std ** 2
@@ -326,12 +319,15 @@ def fit_bayes_2(f, x, y, dy, p0, cov0, print_info=False, plot_figure=None):
 	
 	# target relative error on correlations
 	# 1/1000 because they are written like xx.x %
-	# 1/3 to round correctly
-	cor_relerr = 1/1000 * 1/3
+	# 1/2.1 to round correctly
+	cor_relerr = 1/1000 * 1/2.1
 	
 	# target absolute error on covariance matrix
-	cov_abserr = np.abs(cov0) * cor_relerr # is this right??
+	cov_abserr = np.abs(cov0) * cor_relerr
 	np.fill_diagonal(cov_abserr, np.diag(cov0) * var_relerr)
+	
+	# sigma factor for statistical errors
+	sigma = abs(stats.norm.ppf(1e-3 / 2))
 	
 	if print_info:
 		print('Target relative error on variances = %.3g' % var_relerr)
@@ -383,19 +379,13 @@ def fit_bayes_2(f, x, y, dy, p0, cov0, print_info=False, plot_figure=None):
 	# TARGET ERRORS FOR COMPUTING
 	
 	# target relative error on variance integrals
-	# 1/2 because the are two sources of error: 1. MC (statistical) 2. domain cut (sistematic)
-	# 1/√2 because normalization is multiplied by everything
-	int_var_relerr = np.diag(cov_abserr) / dp0**2 / 2# * 1/2 * 1/np.sqrt(2)
+	int_var_relerr = np.diag(cov_abserr) / dp0 ** 2 / sigma
 	
-	# target relative error on normalization integral
-	# match mininum relative error on variances
-	int_nor_relerr = min(int_var_relerr)
-
 	# target absolute error on average integrals
-	int_avg_abserr = avg_abserr / 2
+	int_avg_abserr = avg_abserr / sigma
 	
 	# target absolute error on covariance integrals
-	int_cov_abserr = np.copy(cov_abserr) / 2
+	int_cov_abserr = np.copy(cov_abserr) / sigma
 	np.fill_diagonal(int_cov_abserr, 0)
 	
 	# INTEGRALS
@@ -404,15 +394,17 @@ def fit_bayes_2(f, x, y, dy, p0, cov0, print_info=False, plot_figure=None):
 	# change of variable: p = 2 * tan(theta), theta in (-pi/2, pi/2)
 	bounds = [(-np.pi/2, np.pi/2)] * len(p0)
 	idxs = np.triu_indices(len(p0))
+	k = 2
 	def integrand(theta):
 		t = np.tan(theta)
-		p = 2 * t
-		l = 2 * (1 + t ** 2) * L(p)
-		return np.concatenate((l, p * l, (np.outer(p, p) * l)[idxs]))
+		p = k * t
+		l = np.prod(k * (1 + t ** 2)) * L(p)
+		return np.concatenate(((l,), p * l, (np.outer(p, p) * l)[idxs]))
 	
 	# figure showing sections of the integrand
 	if not (plot_figure is None):
 		plot_figure.set_tight_layout(True)
+		plot_figure.clf()
 		G = gridspec.GridSpec(len(p0), len(p0) + 2)
 		eps = 1e-4
 		xs = np.linspace(-np.pi/2 + eps, np.pi/2 - eps, 256)
@@ -433,7 +425,7 @@ def fit_bayes_2(f, x, y, dy, p0, cov0, print_info=False, plot_figure=None):
 				theta[i] = theta_i
 				return integrand(theta)[1 + i]
 			axes.plot(xs, [fplot(x) for x in xs], '-k', label=R'$p_{%d}\cdot L$ along $p_{%d}$' % (i, i))
-			axes.legend(loc=1)
+			axes.legend(loc=1, fontsize='small')
 		
 		mat = np.empty(cov0.shape, dtype='uint32')
 		mat[idxs] = np.arange(len(idxs[0]))
@@ -446,7 +438,7 @@ def fit_bayes_2(f, x, y, dy, p0, cov0, print_info=False, plot_figure=None):
 						theta[i] = theta_i
 						return integrand(theta)[1 + len(p0) + mat[i, i]]
 					axes.plot(xs, [fplot(x) for x in xs], '-k', label=R'$p_{%d}^2\cdot L$ along $p_{%d}$' % (i, i))
-					axes.legend(loc=1)
+					axes.legend(loc=1, fontsize='small')
 				else: # i != j
 					def fplot_p(theta_ij):
 						theta[i] = theta_ij
@@ -458,10 +450,10 @@ def fit_bayes_2(f, x, y, dy, p0, cov0, print_info=False, plot_figure=None):
 						return integrand(theta)[1 + len(p0) + mat[i, j]]
 					axes = plot_figure.add_subplot(G[i, j + 2])
 					axes.plot(xs, [fplot_p(x) for x in xs], '-k', label=R'$p_{%d}\cdot p_{%d}\cdot L$ along $p_{%d}=p_{%d}$' % (i, j, i, j))
-					axes.legend(loc=1)
+					axes.legend(loc=1, fontsize='small')
 					axes = plot_figure.add_subplot(G[j, i + 2])
 					axes.plot(xs, [fplot_m(x) for x in xs], '-k', label=R'$p_{%d}\cdot p_{%d}\cdot L$ along $p_{%d}=-p_{%d}$' % (i, j, i, j))
-					axes.legend(loc=1)
+					axes.legend(loc=1, fontsize='small')
 	
 	# takes the integration result and computes average and covariance dividing by normalization
 	def target(I):
@@ -478,12 +470,13 @@ def fit_bayes_2(f, x, y, dy, p0, cov0, print_info=False, plot_figure=None):
 	
 	I = mc_integrator_2(integrand, bounds, target=target, epsrel=epsrel, epsabs=epsabs, print_info=print_info)
 	
-	par = I[:len(p0)]
+	par = [I[i].mean for i in range(len(p0))]
 	cov = np.empty(cov0.shape)
-	cov[idxs] = I[len(p0):]
+	cov[idxs] = [I[i].mean for i in range(len(p0), len(I))]
 	cov.T[idxs] = cov[idxs]
 	
 	if print_info:
+		print()
 		print('Normalized result:')
 		print(lab.format_par_cov(par, cov))
 		print()
@@ -496,18 +489,25 @@ def fit_bayes_2(f, x, y, dy, p0, cov0, print_info=False, plot_figure=None):
 	if print_info:
 		print('Result:')
 		print(lab.format_par_cov(par, cov))
+		print()
 		print('############### END fit_bayes_2 ###############')
 	
 	return par, cov
 
+f = lambda x, a, b, c, d: a * x**2 + b*x + c + d*x**3
+p0 = (-1, -2, -3, -4)
+x = np.linspace(0, 1, 1000)
+dy = np.array([.05] * len(x))
+
+y = f(x, *p0) + np.random.randn(len(x)) * dy
+
 par0, cov0 = lab.fit_generic(f, x, y, dy=dy, p0=p0)
 
 fig = pyplot.figure('fitbayes')
-fig.clf()
 
 par, cov = fit_bayes_2(f, x, y, dy, par0, cov0, print_info=True, plot_figure=fig)
 
 print(lab.format_par_cov(par0, cov0))
 print(lab.format_par_cov(par, cov))
 
-show()
+pyplot.show()
