@@ -7,24 +7,26 @@ from matplotlib import gridspec, pyplot
 
 # TODO/NOTE
 #
-# fit_bayes_1
-# va esponenziale nel numero di parametri, è ragionevole fino a due parametri
-# 1 parametro: un cazzo
-# 2 parametri: 1 secondo
-# 3 parametri: 2 minuti
-# 4 parametri: non ci ho provato, 4 ore?
-# l'np.array dentro fint non mi piace, e bisogna capire come scegliere epsrel / epsabs in modo più fino, queste cose richiedono di modificare integrate.nquad.
-# integrare in coordinate sferiche?
-# si può ancora guadagnare un fattore costante parallelizzando gli integrali, girando un po' le cose dovrebbero essere TUTTI indipendenti a meno di overflow
-# bisogna poter dare i priori!
-# di sicuro questa funzione non va bene con gli errori sulle x perché lì ogni x è un parametro
+# diagonalize_cov
+# eliminare
 #
-# bisogna fare un fit_bayes_2 che usi monte carlo
-# metodi possibili:
-# 0) sampling uniforme ignorante
-# 1) sampling gaussiano basato su p0, covp0
-# 2) sampling furbo che spara N uniformi, se la varianza è ancora alta divide lungo x_0 e va avanti ricorsivo (ciclando x_1, x_2, etc altrimenti la suddivisione a cubetti porta un andamento esponenziale)
-# 3) impacchettare emcee (mi spaventa scegliere in automatico il burn-in)
+# fit_bayes_1
+# eliminare
+#
+# mc_integrator_1
+# supportare le stesse funzioni di mc_integrator_2 (multidim con covarianza e target)
+#
+# mc_integrator_2
+# eliminare gvar in uscita in modo che sia come mc_integrator_1
+#
+# fit_bayes_2
+# poter usare sia mc_integrator_1 che _2
+# print_info se è:
+# False, 0: non printare
+# True, 1: printa
+# n >= 2: passa n - 1 a mc_integrator_*
+#
+# infine, spostare tutto in lab.py e aggiungere bayes='no','mc-auto','mc-basic','mc-vegas' a fit_generic
 
 def diagonalize_cov(cov):
 	"""
