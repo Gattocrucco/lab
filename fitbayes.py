@@ -4,14 +4,9 @@ import time
 from scipy import stats, linalg, integrate
 import vegas
 from matplotlib import gridspec, pyplot
+import sympy
 
 # TODO/NOTE
-#
-# diagonalize_cov
-# eliminare
-#
-# fit_bayes_1
-# eliminare
 #
 # mc_integrator_1
 # supportare le stesse funzioni di mc_integrator_2 (multidim con covarianza e target)
@@ -20,6 +15,8 @@ from matplotlib import gridspec, pyplot
 # eliminare gvar in uscita in modo che sia come mc_integrator_1
 #
 # fit_bayes_2
+# risolvere problema della varianza negativa (sembra saltare fuori quando la stima iniziale non è buonissima, o forse c'entra con autovalori piccoli di cov0)
+# debuggare errori sulle x (il plot degli integrali quadratici è piatto!)
 # poter usare sia mc_integrator_1 che _2
 # print_info se è:
 # False, 0: non printare
@@ -27,163 +24,6 @@ from matplotlib import gridspec, pyplot
 # n >= 2: passa n - 1 a mc_integrator_*
 #
 # infine, spostare tutto in lab.py e aggiungere bayes='no','mc-auto','mc-basic','mc-vegas' a fit_generic
-
-def diagonalize_cov(cov):
-	"""
-	returns V, A with A diagonal such that
-	V A V.T = cov
-	
-	other properties:
-	V A^(-1) V.T = cov^(-1)
-	p' = V.T p
-	p'.T A^(-1) p' = p.T cov^(-1) p
-	
-	cov must be symmetric!
-	
-	"""
-	w, V = linalg.eigh(cov)
-	
-	A = zeros((len(w), len(w)))
-	np.fill_diagonal(A, w)
-	
-	return V, A
-
-def fit_bayes_1(f, x, y, dy, p0, cov0):
-	p0 = asarray(p0)
-	cov0 = asarray(cov0)
-	
-	V, A = diagonalize_cov(cov0)
-	dp0 = sqrt(diag(A))
-	p0 = V.T.dot(p0)
-		
-	# 10^(-3/2) because we show errors with "1.5" digits
-	# 1/2 to round correctly
-	# 1/2 because the are two sources of error, one is sistematic
-	# 1/√2 because everything gets multiplied by normalization
-	relerr = 10 ** (-3/2) * 1/2 * 1/2 * 1/np.sqrt(2)
-	
-	def flim(epsrel):
-		radius = abs(stats.norm.ppf(epsrel / 2)) + 1
-		radius2 = radius ** 2
-		def lim_circle(*p):
-			x0 = np.sqrt(radius2 - np.sum(np.array(p)**2))
-			return (-x0, x0)
-		def lim_square(*p):
-			return (-radius, radius)
-		return [lim_circle] * len(p0)
-	fopts = lambda epsrel: dict(epsabs=0, epsrel=epsrel)
-	
-	idy2 = 1 / dy ** 2
-	chi20 = np.sum((y - f(x, *(V.dot(p0))))**2 * idy2)
-	def L(*p):
-		# must be centered around the maximum
-		# also we must be careful with overflow/underflow
-		# return np.exp(-0.5 * np.sum(((y - f(x, *p)) / dy)**2))
-		# return np.prod(np.exp(-((y - f(x, *p)) / dy)**2 / 2) / (np.sqrt(2 * np.pi) * dy))
-		# return np.exp((-np.sum(((y - f(x, *p)) / dy)**2) + len(x) - len(p0)) / 2)
-		return np.exp((-np.sum((y - f(x, *(V.dot(p))))**2 * idy2) + chi20) / 2)
-	
-	# NORMALIZATION
-	
-	# we change variable such that the function is already with integral about 1 (we hope)
-	# and that the horizontal scale is about 1
-	def fint(*p):
-		p = np.array(p) * dp0 + p0
-		return L(*p)
-	
-	epsrel = 1 / np.sqrt(len(p0)) * relerr * min(dp0 / np.abs(p0)) # quadrature relative errors sum
-	lim = flim(epsrel)
-	
-	start = time.time()
-	N, dN, out = integrate.nquad(fint, lim, opts=fopts(epsrel), full_output=True)
-	deltat = time.time() - start
-	
-	print('Normalization = %s, epsrel: %.2g, neval: %d' % (lab.xe(N, dN), epsrel, out['neval']))
-
-	fa = linspace(-4, 4, 1000)
-	
-	figure(0)
-	clf()
-	suptitle('Normalization')
-	for i in range(len(p0)):
-		subplot(len(p0), 1, i + 1)
-		p = zeros(len(p0))
-		def fplot(pi):
-			p[i] = pi
-			return fint(*p)
-		plot(fa, [fplot(A) for A in fa], label='Time: %.3g s' % (deltat,))
-		if i == 0:
-			legend()
-	
-	figure(1)
-	clf()
-	suptitle('Average and covariance')
-	
-	# AVERAGE
-
-	par = np.empty(len(p0))
-	for i in range(len(par)):
-		def fint(*p):
-			p = np.array(p) * dp0 + p0
-			return p[i] * L(*p)
-		epsrel = 1 / np.sqrt(len(p0)) * relerr * dp0[i] / abs(p0[i])
-		lim = flim(epsrel)
-		start = time.time()
-		par[i], err, out = integrate.nquad(fint, lim, opts=fopts(epsrel), full_output=True)
-		par[i] /= N
-		err /= N
-		deltat = time.time() - start
-		
-		print('Average_%d = %s, epsrel: %.2g, neval: %d' % (i, lab.xe(par[i], err), epsrel, out['neval']))
-		
-		subplot(len(p0), len(p0) + 1, i * (len(p0) + 1) + 1)
-		p = zeros(len(p0))
-		def fplot(pi):
-			p[i] = pi
-			return fint(*p)
-		plot(fa, [fplot(A) for A in fa], label='Time: %.3g s' % (deltat,))
-		legend()
-	
-	# COVARIANCE
-
-	cov = np.empty((len(par), len(par)))
-	for i in range(len(par)):
-		for j in range(i + 1):
-			def fint(*p):
-				p = np.array(p) * dp0 + par
-				return (p[i] - par[i]) * (p[j] - par[j]) * L(*p)
-			epsrel = 1 / np.sqrt(len(p0)) * relerr * np.sqrt(2)
-			epsabs = 0
-			lim = flim(epsrel)
-			if i != j:
-				epsabs = epsrel * dp0[i] * dp0[j]
-				epsrel = 0
-			start = time.time()
-			cov[i, j], err, out = integrate.nquad(fint, lim, opts=dict(epsrel=epsrel, epsabs=epsabs), full_output=True)
-			cov[i, j] /= N
-			err /= N
-			deltat = time.time() - start
-			cov[j, i] = cov[i, j]
-			
-			print('Covariance_%d,%d = %s, epsrel: %.2g, epsabs: %.2g, neval: %d' % (i, j, lab.xe(cov[i, j], err), epsrel, epsabs, out['neval']))
-		
-			subplot(len(p0), len(p0) + 1, i * (len(p0) + 1) + j + 2)
-			p = zeros(len(p0))
-			def fplot(pij, sign):
-				p[i] = pij
-				p[j] = sign * pij
-				return fint(*p)
-			plot(fa, [fplot(A, -1) for A in fa], label='Time: %.3g s' % (deltat,))
-			legend()
-			if i != j:
-				subplot(len(p0), len(p0) + 1, j * (len(p0) + 1) + i + 2)
-				plot(fa, [fplot(A, 1) for A in fa], label='Time: %.3g s' % (deltat,))
-				legend()
-	
-	par = V.dot(par)
-	cov = V.dot(cov).dot(V.T)
-
-	return par, cov
 
 def mc_integrator(f_over_dist, dist_sampler, epsrel=1e-4, epsabs=1e-4, start_n=10000, max_bunch=10000000, print_info=True):
 	summ = 0.0
@@ -269,7 +109,7 @@ def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print
 		current_error = np.array([Ij.sdev for Ij in tI])
 		if len(tI) < len(np.atleast_1d(epsrel)) or len(tI) < len(np.atleast_1d(epsabs)):
 			raise ValueError('Length of target values less than length of target errors.')
-		target_error = epsrel * np.array([Ij.mean for Ij in tI]) + epsabs
+		target_error = epsrel * np.abs([Ij.mean for Ij in tI]) + epsabs
 		if print_info:
 			tnI = target(new_I)
 			print('from this cycle:  I = {}'.format(tnI if len(tnI) > 1 else tnI[0]))
@@ -288,7 +128,7 @@ def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print
 		print('############# END mc_integrator_2 #############')
 	return tI if tI is None or len(tI) > 1 else tI[0]
 
-def fit_bayes_2(f, x, y, dy, p0, cov0, print_info=False, plot_figure=None):
+def fit_bayes_2(f, x, y, dx, dy, p0, cov0, print_info=False, plot_figure=None):
 	"""
 	use MC integrals
 	"""
@@ -299,6 +139,7 @@ def fit_bayes_2(f, x, y, dy, p0, cov0, print_info=False, plot_figure=None):
 		print('x.shape = {}'.format(x.shape))
 		print('y.shape = {}'.format(y.shape))
 		print('dy.shape = {}'.format(dy.shape))
+		print('dx = None' if dx is None else 'dx.shape = {}'.format(dx.shape))
 		print()
 		print('Starting estimate of parameters:')
 		print(lab.format_par_cov(par0, cov0))
@@ -373,10 +214,17 @@ def fit_bayes_2(f, x, y, dy, p0, cov0, print_info=False, plot_figure=None):
 		print()
 
 	# likelihood (not normalized)
-	idy2 = 1 / dy ** 2 # just for efficiency
-	chi20 = np.sum((y - f(x, *(V.dot(M * 0 + Q))))**2 * idy2) # initial normalization with L(0) == 1
-	def L(p):
-		return np.exp((-np.sum((y - f(x, *(V.dot(M * p + Q))))**2 * idy2) + chi20) / 2)
+	if dx is None:
+		idy2 = 1 / dy ** 2 # just for efficiency
+		chi20 = np.sum((y - f(x, *(V.dot(M * 0 + Q))))**2 * idy2) # initial normalization with L(0) == 1
+		def L(p):
+			return np.exp((-np.sum((y - f(x, *(V.dot(M * p + Q))))**2 * idy2) + chi20) / 2)
+	else:
+		idy2 = 1 / dy ** 2
+		chi20 = np.sum((y - f(x, *(V.dot(M * 0 + Q))))**2 * idy2)
+		# change variable: x -> 0, dx -> 1
+		def L(p, xstar):
+			return np.exp((-np.sum((y - f(xstar * dx + x, *(V.dot(M * p + Q))))**2 * idy2) - np.sum(xstar ** 2) + chi20) / 2)
 	
 	# TARGET ERRORS FOR COMPUTING
 	
@@ -393,27 +241,37 @@ def fit_bayes_2(f, x, y, dy, p0, cov0, print_info=False, plot_figure=None):
 	# INTEGRALS
 	
 	# integrand: [L, p0 * L, ..., pd * L, p0 * p0 * L, p0 * p1 * L, ..., p0 * pd * L, p1 * p1 * L, ..., pd * pd * L]
-	# change of variable: p = 2 * tan(theta), theta in (-pi/2, pi/2)
-	bounds = [(-np.pi/2, np.pi/2)] * len(p0)
-	idxs = np.triu_indices(len(p0))
-	k = 2
-	def integrand(theta):
-		t = np.tan(theta)
-		p = k * t
-		l = np.prod(k * (1 + t ** 2)) * L(p)
-		return np.concatenate(((l,), p * l, (np.outer(p, p) * l)[idxs]))
+	# change of variable: p = k * tan(theta), theta in (-pi/2, pi/2)
+	if dx is None:
+		bounds = [(-np.pi/2, np.pi/2)] * len(p0)
+		idxs = np.triu_indices(len(p0))
+		k = 2
+		def integrand(theta):
+			t = np.tan(theta)
+			p = k * t
+			l = np.prod(k * (1 + t ** 2)) * L(p)
+			return np.concatenate(((1,), p, np.outer(p, p)[idxs])) * l
+	else:
+		bounds = [(-np.pi/2, np.pi/2)] * (len(p0) + len(x))
+		idxs = np.triu_indices(len(p0))
+		k = 1
+		def integrand(theta):
+			t = np.tan(theta)
+			p = k * t
+			l = np.prod(k * (1 + t ** 2)) * L(p[:len(p0)], p[len(p0):])
+			return np.concatenate(((1,), p, np.outer(p, p)[idxs])) * l
 	
 	# figure showing sections of the integrand
 	if not (plot_figure is None):
-		plot_figure.set_tight_layout(True)
 		plot_figure.clf()
+		plot_figure.set_tight_layout(True)
 		G = gridspec.GridSpec(len(p0), len(p0) + 2)
 		eps = 1e-4
 		xs = np.linspace(-np.pi/2 + eps, np.pi/2 - eps, 256)
 		
 		for i in range(len(p0)):
 			axes = plot_figure.add_subplot(G[i, 0])
-			theta = np.zeros(len(p0))
+			theta = np.zeros(len(p0) if dx is None else (len(p0) + len(x)))
 			def fplot(theta_i):
 				theta[i] = theta_i
 				return integrand(theta)[0]
@@ -422,7 +280,7 @@ def fit_bayes_2(f, x, y, dy, p0, cov0, print_info=False, plot_figure=None):
 
 		for i in range(len(p0)):
 			axes = plot_figure.add_subplot(G[i, 1])
-			theta = np.zeros(len(p0))
+			theta = np.zeros(len(p0) if dx is None else (len(p0) + len(x)))
 			def fplot(theta_i):
 				theta[i] = theta_i
 				return integrand(theta)[1 + i]
@@ -433,7 +291,7 @@ def fit_bayes_2(f, x, y, dy, p0, cov0, print_info=False, plot_figure=None):
 		mat[idxs] = np.arange(len(idxs[0]))
 		for i in range(len(p0)):
 			for j in range(i, len(p0)):
-				theta = np.zeros(len(p0))
+				theta = np.zeros(len(p0) if dx is None else (len(p0) + len(x)))
 				if i == j:
 					axes = plot_figure.add_subplot(G[i, i + 2])
 					def fplot(theta_i):
@@ -496,20 +354,31 @@ def fit_bayes_2(f, x, y, dy, p0, cov0, print_info=False, plot_figure=None):
 	
 	return par, cov
 
-f = lambda x, a, b, c, d: a * x**2 + b*x + c + d*x**3
-p0 = (-1, -2, -3, -4)
-x = np.linspace(0, 1, 1000)
+f_sym = lambda x, a, b: a * x + b
+p0 = (-1, -2)
+x = np.linspace(0, 1, 10)
 dy = np.array([.05] * len(x))
+dx = np.array([.05] * len(x))
+
+model = lab.FitModel(f_sym)
+f = model.f()
 
 y = f(x, *p0) + np.random.randn(len(x)) * dy
+x += np.random.randn(len(x)) * dx
 
-par0, cov0 = lab.fit_generic(f, x, y, dy=dy, p0=p0)
+par0, cov0 = lab.fit_generic(model, x, y, dx=dx, dy=dy, p0=p0)
 
 fig = pyplot.figure('fitbayes')
 
-par, cov = fit_bayes_2(f, x, y, dy, par0, cov0, print_info=True, plot_figure=fig)
+par, cov = fit_bayes_2(f, x, y, None, dy, par0, cov0, print_info=True, plot_figure=fig)
 
 print(lab.format_par_cov(par0, cov0))
 print(lab.format_par_cov(par, cov))
+
+fig = pyplot.figure('fitbayes2')
+fig.clf()
+axes = fig.add_subplot(111)
+axes.errorbar(x, y, xerr=dx, yerr=dy, fmt='.k', zorder=0)
+axes.plot(x, f(x, *par), '-r', zorder=1)
 
 pyplot.show()
