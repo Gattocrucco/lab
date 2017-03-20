@@ -257,8 +257,9 @@ def fit_bayes_2(f, x, y, dx, dy, p0, cov0, print_info=False, plot_figure=None):
 		k = 1
 		def integrand(theta):
 			t = np.tan(theta)
-			p = k * t
-			l = np.prod(k * (1 + t ** 2)) * L(p[:len(p0)], p[len(p0):])
+			P = k * t
+			p = P[:len(p0)]
+			l = np.prod(k * (1 + t ** 2)) * L(p, P[len(p0):])
 			return np.concatenate(((1,), p, np.outer(p, p)[idxs])) * l
 	
 	# figure showing sections of the integrand
@@ -370,7 +371,7 @@ par0, cov0 = lab.fit_generic(model, x, y, dx=dx, dy=dy, p0=p0)
 
 fig = pyplot.figure('fitbayes')
 
-par, cov = fit_bayes_2(f, x, y, None, dy, par0, cov0, print_info=True, plot_figure=fig)
+par, cov = fit_bayes_2(f, x, y, dx, dy, par0, cov0, print_info=True, plot_figure=fig)
 
 print(lab.format_par_cov(par0, cov0))
 print(lab.format_par_cov(par, cov))
