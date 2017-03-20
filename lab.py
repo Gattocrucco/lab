@@ -1,5 +1,6 @@
 # ********************** IMPORTS ***************************
 
+from __future__ import division, print_function
 import math
 import inspect
 import numpy as np
@@ -119,7 +120,7 @@ def _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=True, conv_d
 			break
 	return par, cov, cycles
 
-def _fit_generic_odr(f, dfdx, dfdps, dfdpdxs, x, y, dx, dy, p0):
+def _fit_generic_odr(f, dfdx, dfdps, dfdpdxs, x, y, dx, dy, p0, **kw):
 	dy2 = dy**2
 	dx2 = dx**2
 	def residual(p):
@@ -133,15 +134,17 @@ def _fit_generic_odr(f, dfdx, dfdps, dfdpdxs, x, y, dx, dy, p0):
 		for i in range(len(p)):
 			rt[i] = - (dfdps[i](x, *p) * srad + dfdpdxs[i](x, *p) * res) / rad
 		return rt
-	par, cov, _, _, _ = optimize.leastsq(residual, p0, Dfun=jac, col_deriv=True, full_output=True)
+	par, cov, _, _, _ = optimize.leastsq(residual, p0, Dfun=jac, col_deriv=True, full_output=True, **kw)
 	return par, cov
 
 class FitOutput:
-
-	def chi2(self):
-		"""compute chisquare. How to in case of non-linearized odr without inverse?
-		in many cases an inverse could be given or built"""
-		pass
+	
+	def __init__(self, par=None, cov=None, chisq=None, delta_y=None, delta_x=None):
+		self.par = par
+		self.cov = cov
+		self.chisq = chisq
+		self.delta_y = delta_y
+		self.delta_x = delta_x
 
 class FitModel:
 
@@ -157,6 +160,7 @@ class FitModel:
 			self._dfdps = [sympy.lambdify(syms, f(*syms).diff(p), "numpy") for p in psym]
 			self._dfdpdxs = [sympy.lambdify(syms, f(*syms).diff(xsym).diff(p), "numpy") for p in psym]
 			self._f = sympy.lambdify(syms, f(*syms), "numpy")
+			self._f_sym = f
 			self._sym = True
 		else:
 			self._dfdx = dfdx
@@ -164,7 +168,15 @@ class FitModel:
 			self._dfdpdx = dfdpdx
 			self._f = f
 			self._sym = False
-
+	
+	def __repr__(self):
+		if self._sym:
+			xsym = sympy.symbols('x', real=True)
+			psym = [sympy.symbols('p%d' % i, real=True) for i in range(len(args) - 1)]
+			return 'FitModel({})'.format(self._f_sym(xsym, *psym))
+		else:
+			return 'FitModel({})'.format(self._f)
+		
 	# def implicit(self):
 	# 	"""return True if the model is implicit (no y)"""
 	# 	pass
@@ -216,13 +228,28 @@ class FitModel:
 	def dfdpdxs(self):
 		return self._dfdpdxs
 
-def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True, method='auto', full_output=False, print_info=False, **kw):
+def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True, method='auto', full_output=False, print_info=0, **kw):
 	"""f may be either callable or FitModel"""
+	print_info = int(print_info)
+	
+	if print_info > 0:
+		print('################ fit_generic ################')
+		print()
+	
+	# MODEL
 
 	if isinstance(f, FitModel):
 		model = f
+		if print_info > 0:
+			print('Model given: {}'.format(model))
+			print()
 	else:
 		model = FitModel(f)
+		if print_info > 0:
+			print('Model created from f: {}'.format(model))
+			print()
+	
+	# METHOD
 	
 	if method == 'auto':
 		dxn = dx is None
@@ -233,21 +260,35 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 			method = 'wleastsq'
 		else:
 			method = 'odrpack'
+		if print_info > 0:
+			print('Method chosen automatically: "%s"' % method)
+			print()
+	elif print_info > 0:
+		print('Method: "%s"' % method)
+		print()
+	
+	# FIT
 
 	if method == 'odrpack':
 		fcn = model.f_odrpack(len(x))
 		fjacb = model.dfdp_odrpack(len(x))
 		fjacd = model.dfdx_odrpack(len(x))
+		
 		M = odr.Model(fcn, fjacb=fjacb, fjacd=fjacd)
 		data = odr.RealData(x, y, sx=dx, sy=dy)
 		ODR = odr.ODR(data, M, beta0=p0)
-		output = ODR.run()
+		ODR.set_iprint(init=print_info > 1, iter=print_info > 2, final=print_info > 1)
+		output = ODR.run(**kw)
 		par = output.beta
 		cov = output.cov_beta
+		
+		if full_output or not absolute_sigma:
+			chisq = np.sum(((output.eps / dy)**2 + (output.delta / dx)**2))
 		if not absolute_sigma:
-			chisq = ((output.eps / dy)**2 + (output.delta / dx)**2).sum() / (len(x) - len(par))
-			cov *= chisq
-		if print_info:
+			cov *= chisq / (len(x) - len(par))
+		if full_output:
+			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=output.delta, delta_y=output.eps)
+		if print_info > 0:
 			output.pprint()
 
 	elif method == 'linodr':
@@ -255,15 +296,31 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		dfdps = model.dfdps()
 		dfdx = model.dfdx()
 		dfdpdxs = model.dfdpdxs()
-		par, cov = _fit_generic_odr(f, dfdx, dfdps, dfdpdxs, x, y, dx, dy, p0)
+		
+		par, cov = _fit_generic_odr(f, dfdx, dfdps, dfdpdxs, x, y, dx, dy, p0, **kw)
+		
+		if full_output or not absolute_sigma:
+			deriv = dfdx(x, *par)
+			err2 = dy ** 2   +   deriv ** 2  *  dx ** 2
+			chisq = np.sum((y - f(x, *par))**2 / err2)
+		if not absolute_sigma:
+			cov *= chisq / (len(x) - len(par))
+		if full_output:
+			fact = (y - f(x, *par)) / err2
+			delta_x = fact * deriv * dx**2
+			delta_y = fact * (-dy**2)
+			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y)
 
 	elif method == 'ev':
+		# TODO jac
 		f = model.f()
 		dfdx = model.dfdx()
 		conv_diff = kw.pop('conv_diff', 1e-7)
 		max_cycles = kw.pop('max_cycles', 5)
+		
 		par, cov = optimize.curve_fit(f, x, y, p0=p0, absolute_sigma=absolute_sigma, **kw)
 		par, cov, cycles = _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, **kw)
+		
 		if cycles == -1:
 			raise RuntimeError('Maximum number (%d) of fit cycles reached' % max_cycles)
 	
@@ -279,6 +336,8 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 
 	else:
 		raise KeyError(method)
+	
+	# RETURN
 
 	return par, cov
 
