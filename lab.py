@@ -154,28 +154,25 @@ class FitModel:
 		if sym:
 			args = inspect.getargspec(f).args
 			xsym = sympy.symbols('x', real=True)
-			psym = [sympy.symbols('p_%d' % i, real=True) for i in range(len(args) - 1)]
+			psym = [sympy.symbols('p%s' % num2sub(i), real=True) for i in range(len(args) - 1)]
 			syms = [xsym] + psym
 			self._dfdx = sympy.lambdify(syms, f(*syms).diff(xsym), "numpy")
 			self._dfdps = [sympy.lambdify(syms, f(*syms).diff(p), "numpy") for p in psym]
 			self._dfdpdxs = [sympy.lambdify(syms, f(*syms).diff(xsym).diff(p), "numpy") for p in psym]
 			self._f = sympy.lambdify(syms, f(*syms), "numpy")
 			self._f_sym = f
+			self._repr = 'FitModel({})'.format(f(*syms))
 			self._sym = True
 		else:
 			self._dfdx = dfdx
 			self._dfdp = dfdp
 			self._dfdpdx = dfdpdx
 			self._f = f
+			self._repr = 'FitModel({})'.format(f)
 			self._sym = False
 	
 	def __repr__(self):
-		if self._sym:
-			xsym = sympy.symbols('x', real=True)
-			psym = [sympy.symbols('p%d' % i, real=True) for i in range(len(args) - 1)]
-			return 'FitModel({})'.format(self._f_sym(xsym, *psym))
-		else:
-			return 'FitModel({})'.format(self._f)
+		return self._repr
 		
 	# def implicit(self):
 	# 	"""return True if the model is implicit (no y)"""
