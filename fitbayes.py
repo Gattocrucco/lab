@@ -12,16 +12,18 @@ import sympy
 # supportare le stesse funzioni di mc_integrator_2 (multidim con covarianza e target)
 #
 # mc_integrator_2
+# bisogna che salvi tutti i result singoli e che calcoli il Q a partire dal fondo finché non scazza, altrimenti quando non trova il picco i risultati iniziali a integrale nullo pesano un casino.
 # eliminare gvar in uscita in modo che sia come mc_integrator_1
 #
 # fit_bayes_2
-# risolvere problema della varianza negativa (sembra saltare fuori quando la stima iniziale non è buonissima, o forse c'entra con autovalori piccoli di cov0)
-# debuggare errori sulle x (il plot degli integrali quadratici è piatto!)
 # poter usare sia mc_integrator_1 che _2
 # print_info se è:
 # False, 0: non printare
 # True, 1: printa
 # n >= 2: passa n - 1 a mc_integrator_*
+# è lentiiissimo!
+# generalizzando il fit ML, non potremmo usare taylor più fini della loglikelihood?
+# con tanti parametri (es. errori sulle x) ci mette un sacco a rendersi conto del picco, forse è meglio usare importance sampling fisso (mc_integrator_1) anziché vegas.
 #
 # infine, spostare tutto in lab.py e aggiungere bayes='no','mc-auto','mc-basic','mc-vegas' a fit_generic
 
@@ -99,9 +101,9 @@ def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print
 		Q = stats.chi2.sf(chi2, (Is.shape[0] - 1) * Is.shape[1])
 		if print_info:
 			print(result.summary())
-		if Q < 0.05:
+		if Q < 0.05 or Q > 0.95:
 			if print_info:
-				print('Q = %.2g < 0.05, repeating cycle.' % Q)
+				print('Q = %.2g, repeating cycle.' % Q)
 			continue
 		I = [(I[j]/I[j].var + new_I[j]/new_I[j].var) / (1/I[j].var + 1/new_I[j].var) for j in range(Is.shape[1])] if not (I is None) else new_I
 		total_neval += neval
@@ -128,7 +130,7 @@ def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print
 		print('############# END mc_integrator_2 #############')
 	return tI if tI is None or len(tI) > 1 else tI[0]
 
-def fit_bayes_2(f, x, y, dx, dy, p0, cov0, print_info=False, plot_figure=None):
+def fit_bayes_2(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None):
 	"""
 	use MC integrals
 	"""
@@ -221,10 +223,10 @@ def fit_bayes_2(f, x, y, dx, dy, p0, cov0, print_info=False, plot_figure=None):
 			return np.exp((-np.sum((y - f(x, *(V.dot(M * p + Q))))**2 * idy2) + chi20) / 2)
 	else:
 		idy2 = 1 / dy ** 2
-		chi20 = np.sum((y - f(x, *(V.dot(M * 0 + Q))))**2 * idy2)
+		chi20 = np.sum((y - f(x0, *(V.dot(M * 0 + Q))))**2 * idy2)
 		# change variable: x -> 0, dx -> 1
 		def L(p, xstar):
-			return np.exp((-np.sum((y - f(xstar * dx + x, *(V.dot(M * p + Q))))**2 * idy2) - np.sum(xstar ** 2) + chi20) / 2)
+			return np.exp((-np.sum((y - f(xstar * dx + x0, *(V.dot(M * p + Q))))**2 * idy2) - np.sum(xstar ** 2) + chi20) / 2)
 	
 	# TARGET ERRORS FOR COMPUTING
 	
@@ -319,7 +321,7 @@ def fit_bayes_2(f, x, y, dx, dy, p0, cov0, print_info=False, plot_figure=None):
 	# takes the integration result and computes average and covariance dividing by normalization
 	def target(I):
 		out1 = [I[j] / I[0] for j in range(1, len(p0) + 1)]
-		out2 = [(I[j + len(p0) + 1] - I[idxs[0][j] + 1] * I[idxs[1][j] + 1]) / I[0] for j in range(len(idxs[0]))]
+		out2 = [I[j + len(p0) + 1] / I[0] - out1[idxs[0][j]] * out1[idxs[1][j]] for j in range(len(idxs[0]))]
 		return out1 + out2
 	
 	epsrel = np.zeros(cov0.shape)
@@ -367,11 +369,11 @@ f = model.f()
 y = f(x, *p0) + np.random.randn(len(x)) * dy
 x += np.random.randn(len(x)) * dx
 
-par0, cov0 = lab.fit_generic(model, x, y, dx=dx, dy=dy, p0=p0)
+par0, cov0, out = lab.fit_generic(model, x, y, dx=dx, dy=dy, p0=p0, full_output=True, method='odrpack')
 
 fig = pyplot.figure('fitbayes')
 
-par, cov = fit_bayes_2(f, x, y, dx, dy, par0, cov0, print_info=True, plot_figure=fig)
+par, cov = fit_bayes_2(f, x, y, dx, dy, par0, cov0, x + out.delta_x, print_info=True, plot_figure=fig)
 
 print(lab.format_par_cov(par0, cov0))
 print(lab.format_par_cov(par, cov))
@@ -379,7 +381,9 @@ print(lab.format_par_cov(par, cov))
 fig = pyplot.figure('fitbayes2')
 fig.clf()
 axes = fig.add_subplot(111)
-axes.errorbar(x, y, xerr=dx, yerr=dy, fmt='.k', zorder=0)
-axes.plot(x, f(x, *par), '-r', zorder=1)
+axes.errorbar(x, y, xerr=dx, yerr=dy, fmt=',k', zorder=0)
+axes.plot(x, f(x, *par0), '-r', zorder=1)
+axes.plot(x, f(x, *par), '--b', zorder=1.5)
+axes.plot(x + out.delta_x, y + out.delta_y, '.k', zorder=2)
 
 pyplot.show()
