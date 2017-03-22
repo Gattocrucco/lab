@@ -28,6 +28,8 @@ class TestLab(unittest.TestCase):
 		# check that big numbers are checked
 		with self.assertRaises(ValueError):
 			lab.util_mm_esr(1e8, unit='volt', metertype='kdm700')
+		# check that internal resistance of voltmeter is retrieved properly (error if fails)
+		lab.util_mm_esr(1, unit='volt', metertype='kdm700')
 	
 	def test_fit_norm_cov(self):
 		# just check that it works because there's always someone willing to rewrite this stupid function

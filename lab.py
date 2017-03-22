@@ -161,14 +161,14 @@ class FitModel:
 			self._dfdpdxs = [sympy.lambdify(syms, f(*syms).diff(xsym).diff(p), "numpy") for p in psym]
 			self._f = sympy.lambdify(syms, f(*syms), "numpy")
 			self._f_sym = f
-			self._repr = 'FitModel({})'.format(f(*syms))
+			self._repr = 'FitModel(y = {})'.format(f(*syms))
 			self._sym = True
 		else:
 			self._dfdx = dfdx
 			self._dfdp = dfdp
 			self._dfdpdx = dfdpdx
 			self._f = f
-			self._repr = 'FitModel({})'.format(f)
+			self._repr = 'FitModel(y = {})'.format(f)
 			self._sym = False
 	
 	def __repr__(self):
@@ -955,7 +955,7 @@ def util_mm_er(x, scale, metertype='lab3', unit='volt', sqerr=False):
 	if typ == 'digital':
 		e = errsum(x * info['perc'][idx] / 100.0, info['digit'][idx] * 10**(idx + math.log10(info['scales'][0] / 2.0) - 3))
 		if unit == 'volt' or unit == 'volt_ac':
-			r = info['voltres']
+			r = meter['voltres']
 		elif unit == 'ampere' or unit == 'ampere_ac':
 			r = info['cdt'] / s
 	elif typ == 'analog':
