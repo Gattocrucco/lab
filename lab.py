@@ -9,7 +9,7 @@ from scipy import odr, optimize, stats, special, linalg
 import os
 import sympy
 from collections import Counter
-import numdifftools as nd
+import numdifftools as numdiff
 
 # TODO
 #
@@ -24,8 +24,7 @@ import numdifftools as nd
 #
 # util_format
 # opzione si=True per formattare come num2si
-# opzione errdig=(intero) per scegliere le cifre dell'errore
-# usare lo standard di arrotondamento del PDG
+# opzione errdig=(float)|'pdg' per scegliere le cifre dell'errore o usare il formato del PDG
 #
 # fit_generic (nuova funzione)
 # mangia anche le funzioni sympy calcolandone jacb e jacd, riconoscendo se può fare un fit analitico
@@ -50,6 +49,7 @@ __all__ = [ # things imported when you do "from lab import *"
 	'fit_generic',
 	'fit_linear',
 	'fit_const_yerr',
+	'fit_oversampling',
 	'util_mm_er',
 	'util_mm_list',
 	'mme',
@@ -139,10 +139,13 @@ def _fit_generic_odr(f, dfdx, dfdps, dfdpdxs, x, y, dx, dy, p0, **kw):
 
 class FitOutput:
 	
-	def __init__(self, par=None, cov=None, chisq=None, delta_y=None, delta_x=None):
+	def __init__(self, par=None, cov=None, chisq=None, delta_x=None, delta_y=None):
 		self.par = par
 		self.cov = cov
 		self.chisq = chisq
+		if not (chisq is None):
+			self.chisq_dof = len(delta_x) - len(par)
+			self.chisq_pvalue = stats.chi2.sf(self.chisq, self.chisq_dof)
 		self.delta_y = delta_y
 		self.delta_x = delta_x
 
@@ -305,7 +308,7 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		if full_output:
 			fact = (y - f(x, *par)) / err2
 			delta_x = fact * deriv * dx**2
-			delta_y = fact * (-dy**2)
+			delta_y = -fact * dy**2
 			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y)
 
 	elif method == 'ev':
@@ -321,22 +324,50 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		if cycles == -1:
 			raise RuntimeError('Maximum number (%d) of fit cycles reached' % max_cycles)
 	
+		if full_output:
+			# compute delta_xy as in linodr.
+			# doubt: should we compute it only along y?
+			deriv = dfdx(x, *par)
+			err2 = dy ** 2   +   deriv ** 2  *  dx ** 2
+			chisq = np.sum((y - f(x, *par))**2 / err2)
+			fact = (y - f(x, *par)) / err2
+			delta_x = fact * deriv * dx**2
+			delta_y = -fact * dy**2
+			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y)
+
 	elif method == 'wleastsq':
 		f = model.f()
 		jac = model.dfdp_curve_fit(len(x))
+		
 		par, cov = optimize.curve_fit(f, x, y, sigma=dy, p0=p0, absolute_sigma=absolute_sigma, jac=jac, **kw)
+		
+		if full_output:
+			delta_x = np.zeros(len(x))
+			delta_y = y - f(x, *par)
+			chisq = np.sum((delta_y / dy) ** 2)
+			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y)
 	
 	elif method == 'leastsq':
 		f = model.f()
 		jac = model.dfdp_curve_fit(len(x))
+		
 		par, cov = optimize.curve_fit(f, x, y, p0=p0, absolute_sigma=False, jac=jac, **kw)
+
+		if full_output:
+			delta_x = np.zeros(len(x))
+			delta_y = y - f(x, *par)
+			chisq = np.sum((delta_y / dy) ** 2)
+			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y)
 
 	else:
 		raise KeyError(method)
 	
 	# RETURN
 
-	return par, cov
+	if full_output:
+		return par, cov, out
+	else:
+		return par, cov
 
 def _fit_affine_odr(x, y, dx, dy):
 	dy2 = dy**2
@@ -688,14 +719,14 @@ def fit_oversampling(data, digit=1, print_info=False, plot_axes=None):
 		print()
 	
 	par = result.x
-	cov = nd.Hessian(minusloglikelihood, method='forward')(par)
+	cov = numdiff.Hessian(minusloglikelihood, method='forward')(par)
 	try:
 		cov = linalg.inv(cov)
 	except linalg.LinAlgError:
 		if print_info:
 			print('Hessian is not invertible, computing pseudo-inverse')
 			print()
-		jac = nd.Jacobian(minusloglikelihood, method='forward')(par)
+		jac = numdiff.Jacobian(minusloglikelihood, method='forward')(par)
 		_, s, VT = linalg.svd(jac, full_matrices=False)
 		threshold = np.finfo(float).eps * max(jac.shape) * s[0]
 		s = s[s > threshold]
