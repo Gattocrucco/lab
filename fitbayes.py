@@ -2,7 +2,7 @@ import numpy as np
 import lab
 import time
 from scipy import stats, linalg, integrate
-import vegas
+import vegas, gvar
 from matplotlib import gridspec, pyplot
 import sympy
 
@@ -12,10 +12,10 @@ import sympy
 # supportare le stesse funzioni di mc_integrator_2 (multidim con covarianza e target)
 #
 # mc_integrator_2
-# bisogna che salvi tutti i result singoli e che calcoli il Q a partire dal fondo finché non scazza, altrimenti quando non trova il picco i risultati iniziali a integrale nullo pesano un casino.
 # eliminare gvar in uscita in modo che sia come mc_integrator_1
 #
-# fit_bayes_2
+# fit_bayes
+# dare la stima dell'errore sui numeri (medie e covarianza) che sarebbe molto carino e ce l'abbiamo già
 # poter usare sia mc_integrator_1 che _2
 # print_info se è:
 # False, 0: non printare
@@ -71,71 +71,105 @@ def mc_integrator(f_over_dist, dist_sampler, epsrel=1e-4, epsabs=1e-4, start_n=1
 		i += 1
 	return I, DI
 
-def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print_info=True, max_cycles=20, target=lambda I: I):
+def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print_info=True, max_cycles=20, target=lambda I: I, Q_bound=0.001):
 	if print_info:
 		print('############### mc_integrator_2 ###############')
 		print()
 		print('integrand = {}'.format(f))
-		print('bounds = {}'.format(bounds))
+		print('bounds[0] = {}'.format(bounds[0]))
 		print('epsrel = {}'.format(epsrel))
 		print('epsabs = {}'.format(epsabs))
+		print('max_cycles = %d' % max_cycles)
+		print('Q bound = %.2g' % Q_bound)
 	epsrel = np.asarray(epsrel)
 	epsabs = np.asarray(epsabs)
+	
 	integ = vegas.Integrator(bounds)
+	
 	neval = start_neval
-	total_neval = 0
-	I = None
+	nevals = []
 	tI = None
+	results = None
 	for i in range(1, 1 + max_cycles):
+		# INTEGRATION
 		nitn = 10 if i == 1 else 5
 		if print_info:
 			print()
 			print('***** Cycle %d *****' % i)
-			print('Integrating with neval=%d, nitn=%d' % (neval, nitn))
-		result = integ(f, nitn=nitn, neval=neval)
-		Is = np.array(result.itn_results)
-		if len(Is.shape) == 1:
-			Is = Is.reshape((len(Is), 1))
-		new_I = [sum([J / J.var for J in Is[:,j]]) / sum([1 / J.var for J in Is[:,j]]) for j in range(Is.shape[1])]
-		chi2 = sum([sum([(J.mean - new_I[j].mean)**2 / J.var for J in Is[:,j]]) for j in range(Is.shape[1])])
-		Q = stats.chi2.sf(chi2, (Is.shape[0] - 1) * Is.shape[1])
+			print('Integrating with neval=%d, nitn=%d...' % (neval, nitn))
+		result = integ(f, nitn=nitn, neval=neval) # place where things are actually done
+		new_results = np.array(result.itn_results)
+		if len(new_results.shape) == 3 and new_results.shape[2] == 1:
+			new_results = new_results[:,:,0]
 		if print_info:
-			print(result.summary())
-		if Q < 0.05 or Q > 0.95:
+			print(    'itn   raw integrals')
+			for j in range(len(new_results)):
+				print('%3d   {}'.format(new_results[j]) % (j + len([] if results is None else results) + 1))
+			print()
+		results = np.concatenate((results, new_results)) if not (results is None) else new_results
+		nevals += [neval] * nitn
+		
+		# COMPUTE WEIGHTED AVERAGES, Q
+		# compute weighted averages and p-values for the last k results for any k.
+		wavgs = np.empty(results.shape, dtype=gvar.GVar)
+		Qs = np.empty(len(results))
+		# chisqs = np.empty(len(results))
+		wavg_nom = 0
+		wavg_den = 0
+		for j in range(len(results)):
+			R = results[-j - 1]
+			wavg_nom += np.array(list(map(lambda x: x / x.var, R)))
+			wavg_den += np.array(list(map(lambda x: 1 / x.var, R)))
+			wavg = wavg_nom / wavg_den
+			wavgs[j] = wavg
+			chisq = 0
+			for k in range(j + 1):
+				Rk = results[-k - 1]
+				chisq += np.sum(np.fromiter(map(lambda x, y: (x.mean - y.mean)**2 / x.var, Rk, wavg), 'float64', count=len(Rk)))
+			# chisqs[j] = chisq
+			Qs[j] = stats.chi2.sf(chisq, j * len(R)) if j != 0 else 0.5
+		
+		# DECIDE VALUE OF INTEGRAL
+		# max last results with p-value in bounds.
+		nok = np.sum(np.cumprod((Q_bound < Qs) & (Qs < 1 - Q_bound)))
+		if nok == 1:
 			if print_info:
-				print('Q = %.2g, repeating cycle.' % Q)
+				print('last two results has Q or 1-Q <= %.2g, continuing' % Q_bound)
 			continue
-		I = [(I[j]/I[j].var + new_I[j]/new_I[j].var) / (1/I[j].var + 1/new_I[j].var) for j in range(Is.shape[1])] if not (I is None) else new_I
-		total_neval += neval
-		tI = target(I)
+		tI = target(wavgs[nok - 1]) # apply target transform
+		
+		# DECIDE WHAT NEXT
+		# check if condition on errors is satisfied, else estimate necessary samples.
+		total_neval = np.sum(nevals[-nok:])
 		current_error = np.array([Ij.sdev for Ij in tI])
-		if len(tI) < len(np.atleast_1d(epsrel)) or len(tI) < len(np.atleast_1d(epsabs)):
-			raise ValueError('Length of target values less than length of target errors.')
 		target_error = epsrel * np.abs([Ij.mean for Ij in tI]) + epsabs
 		if print_info:
-			tnI = target(new_I)
-			print('from this cycle:  I = {}'.format(tnI if len(tnI) > 1 else tnI[0]))
-			print('weighted average: I = {}'.format(tI if len(tI) > 1 else tI[0]))
+			print('considering last %d/%d results for weighted average (Q = %.2g),' % (nok, len(results), Qs[nok - 1]))
+			print('which consist of about %s/%s function evaluations' % tuple(map(lambda x: lab.num2si(x, format='%.3g', space=''), (total_neval, np.sum(nevals)))))
+			print('last result:      I = {}'.format(target(wavgs[0])))
+			print('weighted average: I = {}'.format(tI))
 			print('                 DI = {}'.format(current_error))
 			print('epsrel * I + epsabs = {}'.format(target_error))
 		if all(current_error <= target_error):
 			if print_info:
 				print('Termination condition DI <= epsrel * I + epsabs satisfied.')
 			break
-		target_total_neval = int(np.max(np.round((current_error / target_error) ** 2 * total_neval)))
-		target_neval = target_total_neval - total_neval
-		neval = max(neval, min(neval * 4, target_neval))
+		target_total_neval = np.max(np.round((current_error / target_error) ** 2 * total_neval))
+		target_neval = (target_total_neval - total_neval) / 5
+		neval = int(max(neval / 4, min(neval * 4, target_neval)))
+	
+	# RETURN
 	if print_info:
 		print()
 		print('############# END mc_integrator_2 #############')
-	return tI if tI is None or len(tI) > 1 else tI[0]
+	return tI
 
-def fit_bayes_2(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None):
+def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None):
 	"""
 	use MC integrals
 	"""
 	if print_info:
-		print('################# fit_bayes_2 #################')
+		print('################# fit_bayes #################')
 		print()
 		print('f = {}'.format(f))
 		print('x.shape = {}'.format(x.shape))
@@ -353,7 +387,7 @@ def fit_bayes_2(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=Non
 		print('Result:')
 		print(lab.format_par_cov(par, cov))
 		print()
-		print('############### END fit_bayes_2 ###############')
+		print('############### END fit_bayes ###############')
 	
 	return par, cov
 
@@ -373,7 +407,7 @@ par0, cov0, out = lab.fit_generic(model, x, y, dx=dx, dy=dy, p0=p0, full_output=
 
 fig = pyplot.figure('fitbayes')
 
-par, cov = fit_bayes_2(f, x, y, dx, dy, par0, cov0, x + out.delta_x, print_info=True, plot_figure=fig)
+par, cov = fit_bayes(f, x, y, None, dy, par0, cov0, x + out.delta_x, print_info=True, plot_figure=fig)
 
 print(lab.format_par_cov(par0, cov0))
 print(lab.format_par_cov(par, cov))
