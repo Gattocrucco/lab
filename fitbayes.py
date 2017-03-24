@@ -15,7 +15,6 @@ import sympy
 # eliminare gvar in uscita in modo che sia come mc_integrator_1
 #
 # fit_bayes
-# dare la stima dell'errore sui numeri (medie e covarianza) che sarebbe molto carino e ce l'abbiamo già
 # poter usare sia mc_integrator_1 che _2
 # print_info se è:
 # False, 0: non printare
@@ -156,7 +155,7 @@ def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print
 			break
 		target_total_neval = np.max(np.round((current_error / target_error) ** 2 * total_neval))
 		target_neval = (target_total_neval - total_neval) / 5
-		neval = int(max(neval / 4, min(neval * 4, target_neval)))
+		neval = int(max(neval, min(neval * 4, target_neval)))
 	
 	# RETURN
 	if print_info:
@@ -188,13 +187,32 @@ def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None)
 	# 1/2.1 to round correctly
 	std_relerr = 10 ** (-3/2) * 1/2.1
 	
-	# target relative error on computed variances
-	# 2 because variance = std ** 2
-	var_relerr = std_relerr * 2
+	# target absolute error on correlations
+	# 1/1000 because they are written like xx.x %
+	# 1/2.1 to round correctly
+	cor_abserr = 0.001 * 1/2.1
 	
 	# target absolute error on computed averages
 	# align with error on standard deviations, based on initial estimate
-	avg_abserr = std_relerr * np.sqrt(np.diag(cov0))
+	dp0 = np.sqrt(np.diag(cov0))
+	avg_abserr = std_relerr * dp0
+	
+	# # target relative error on correlations
+	# cor_relerr = cor_abserr / (np.abs(cov0) / np.outer(dp0, dp0))
+	# print(cor_relerr)
+	#
+	# # target relative error on computed variances
+	# # 2 because variance = std ** 2
+	# np.fill_diagonal(cor_relerr, np.inf)
+	# var_relerr = np.minimum(std_relerr * 2, 1/np.sqrt(2) * np.min(cor_relerr, axis=0))
+	#
+	# # target absolute error on covariance matrix
+	# np.fill_diagonal(cor_relerr, 0)
+	# cov_abserr = np.sqrt(np.abs(cor_relerr**2 - var_relerr**2)) * np.abs(cov0)
+	
+	# target relative error on computed variances
+	# 2 because variance = std ** 2
+	var_relerr = std_relerr * 2
 	
 	# target relative error on correlations
 	# 1/1000 because they are written like xx.x %
@@ -204,13 +222,13 @@ def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None)
 	# target absolute error on covariance matrix
 	cov_abserr = np.abs(cov0) * cor_relerr
 	np.fill_diagonal(cov_abserr, np.diag(cov0) * var_relerr)
-	
+
 	# sigma factor for statistical errors
 	sigma = abs(stats.norm.ppf(1e-3 / 2))
 	
 	if print_info:
-		print('Target relative error on variances = %.3g' % var_relerr)
-		print('Target relative error on correlations = %.3g' % cor_relerr)
+		print('Target relative error on standard deviations = %.3g' % std_relerr)
+		print('Target absolute error on correlations = %.3g' % cor_abserr)
 		print('Target absolute error on averages:\n{}'.format(avg_abserr))
 		print('Target absolute error on covariance matrix:\n{}'.format(cov_abserr))
 		print()
@@ -367,35 +385,52 @@ def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None)
 	
 	I = mc_integrator_2(integrand, bounds, target=target, epsrel=epsrel, epsabs=epsabs, print_info=print_info)
 	
-	par = [I[i].mean for i in range(len(p0))]
-	cov = np.empty(cov0.shape)
-	cov[idxs] = [I[i].mean for i in range(len(p0), len(I))]
+	par = np.array(I[:len(p0)])
+	cov = np.empty(cov0.shape, dtype=object)
+	cov[idxs] = I[len(p0):]
 	cov.T[idxs] = cov[idxs]
+	
+	func_mean = np.vectorize(lambda x: x.mean, otypes=['float64'])
+	func_sdev = np.vectorize(lambda x: x.sdev, otypes=['float64'])
 	
 	if print_info:
 		print()
 		print('Normalized result:')
-		print(lab.format_par_cov(par, cov))
-		print()
+		print(lab.format_par_cov(func_mean(par), func_mean(cov)))
+		print('Diagonalized result:')
+		print(lab.format_par_cov(func_mean(M * par + Q), func_mean(np.outer(M, M) * cov)))
 		
 	# INVERSE VARIABLE TRANSFORM
 	
 	par = V.dot(M * par + Q)
 	cov = V.dot(np.outer(M, M) * cov).dot(V.T)
 	
+	dpar = func_sdev(par)
+	dcov = func_sdev(cov)
+	
+	mpar = func_mean(par)
+	mcov = func_mean(cov)
+		
 	if print_info:
 		print('Result:')
-		print(lab.format_par_cov(par, cov))
+		print(lab.format_par_cov(mpar, mcov))
+		print('Averages with computing errors:')
+		print(par)
+		print('Standard deviations with computing errors:')
+		sigma = np.sqrt(np.diag(cov))
+		print(sigma)
+		print('Correlations with computing errors:')
+		print(cov / np.outer(sigma, sigma))
 		print()
 		print('############### END fit_bayes ###############')
 	
-	return par, cov
+	return mpar, mcov, dpar, dcov
 
-f_sym = lambda x, a, b: a * x + b
-p0 = (-1, -2)
-x = np.linspace(0, 1, 10)
+f_sym = lambda x, a, b: a * sympy.sin(b * x)
+p0 = (-1, -10)
+x = np.linspace(0, 1, 100)
 dy = np.array([.05] * len(x))
-dx = np.array([.05] * len(x))
+dx = np.array([.05] * len(x)) * 0
 
 model = lab.FitModel(f_sym)
 f = model.f()
@@ -403,11 +438,11 @@ f = model.f()
 y = f(x, *p0) + np.random.randn(len(x)) * dy
 x += np.random.randn(len(x)) * dx
 
-par0, cov0, out = lab.fit_generic(model, x, y, dx=dx, dy=dy, p0=p0, full_output=True, method='odrpack')
+par0, cov0, out = lab.fit_generic(model, x, y, dx=dx, dy=dy, p0=p0, full_output=True, method='linodr')
 
 fig = pyplot.figure('fitbayes')
 
-par, cov = fit_bayes(f, x, y, None, dy, par0, cov0, x + out.delta_x, print_info=True, plot_figure=fig)
+par, cov, dpar, dcov = fit_bayes(f, x, y, None, dy, par0, cov0, x + out.delta_x, print_info=True, plot_figure=fig)
 
 print(lab.format_par_cov(par0, cov0))
 print(lab.format_par_cov(par, cov))
