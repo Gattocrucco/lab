@@ -15,6 +15,7 @@ import sympy
 # eliminare gvar in uscita in modo che sia come mc_integrator_1
 #
 # fit_bayes
+# aggiungere i priori, ad esempio quando fitto sinusoidi vede anche le armoniche
 # poter usare sia mc_integrator_1 che _2
 # print_info se è:
 # False, 0: non printare
@@ -88,6 +89,7 @@ def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print
 	neval = start_neval
 	nevals = []
 	tI = None
+	I = None
 	results = None
 	for i in range(1, 1 + max_cycles):
 		# INTEGRATION
@@ -135,7 +137,8 @@ def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print
 			if print_info:
 				print('last two results has Q or 1-Q <= %.2g, continuing' % Q_bound)
 			continue
-		tI = target(wavgs[nok - 1]) # apply target transform
+		I = wavgs[nok - 1]
+		tI = target(I) # apply target transform
 		
 		# DECIDE WHAT NEXT
 		# check if condition on errors is satisfied, else estimate necessary samples.
@@ -161,7 +164,7 @@ def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print
 	if print_info:
 		print()
 		print('############# END mc_integrator_2 #############')
-	return tI
+	return I
 
 def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None):
 	"""
@@ -187,50 +190,26 @@ def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None)
 	# 1/2.1 to round correctly
 	std_relerr = 10 ** (-3/2) * 1/2.1
 	
-	# target absolute error on correlations
-	# 1/1000 because they are written like xx.x %
+	# target relative error on (1 - correlation)
 	# 1/2.1 to round correctly
-	cor_abserr = 0.001 * 1/2.1
+	onemcor_relerr = 0.01 * 1/2.1
 	
 	# target absolute error on computed averages
 	# align with error on standard deviations, based on initial estimate
 	dp0 = np.sqrt(np.diag(cov0))
 	avg_abserr = std_relerr * dp0
 	
-	# # target relative error on correlations
-	# cor_relerr = cor_abserr / (np.abs(cov0) / np.outer(dp0, dp0))
-	# print(cor_relerr)
-	#
-	# # target relative error on computed variances
-	# # 2 because variance = std ** 2
-	# np.fill_diagonal(cor_relerr, np.inf)
-	# var_relerr = np.minimum(std_relerr * 2, 1/np.sqrt(2) * np.min(cor_relerr, axis=0))
-	#
-	# # target absolute error on covariance matrix
-	# np.fill_diagonal(cor_relerr, 0)
-	# cov_abserr = np.sqrt(np.abs(cor_relerr**2 - var_relerr**2)) * np.abs(cov0)
-	
 	# target relative error on computed variances
 	# 2 because variance = std ** 2
 	var_relerr = std_relerr * 2
 	
-	# target relative error on correlations
-	# 1/1000 because they are written like xx.x %
-	# 1/2.1 to round correctly
-	cor_relerr = 1/1000 * 1/2.1
-	
-	# target absolute error on covariance matrix
-	cov_abserr = np.abs(cov0) * cor_relerr
-	np.fill_diagonal(cov_abserr, np.diag(cov0) * var_relerr)
-
 	# sigma factor for statistical errors
-	sigma = abs(stats.norm.ppf(1e-3 / 2))
+	sigma = abs(stats.norm.ppf(1e-2 / 2))
 	
 	if print_info:
 		print('Target relative error on standard deviations = %.3g' % std_relerr)
-		print('Target absolute error on correlations = %.3g' % cor_abserr)
+		# print('Target absolute error on correlations = %.3g' % cor_abserr)
 		print('Target absolute error on averages:\n{}'.format(avg_abserr))
-		print('Target absolute error on covariance matrix:\n{}'.format(cov_abserr))
 		print()
 	
 	# VARIABLE TRANSFORM AND LIKELIHOOD
@@ -239,34 +218,18 @@ def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None)
 	w, V = linalg.eigh(cov0)
 	dp0 = np.sqrt(w)
 	p0 = V.T.dot(p0)
-	cov_abserr = np.sqrt(np.abs(V.T.dot(cov_abserr ** 2).dot(V)))
-	avg_abserr = np.sqrt(np.abs(V.T.dot(avg_abserr ** 2)))
 	
 	if print_info:
 		print('Diagonalized starting estimate of parameters:')
 		print(lab.xe(p0, dp0))
 		print()
-		print('Diagonalized target absolute error on averages:')
-		print(avg_abserr)
-		print('Diagonalized target absolute error on covariance matrix:')
-		print(cov_abserr)
-		print()
-		
+	
 	# change variable: p0 -> 0, dp0 -> 1
 	M = dp0
 	Q = p0
 	dp0 = np.ones(len(p0))
 	p0 = np.zeros(len(p0))
-	cov_abserr /= np.outer(M, M)
-	avg_abserr /= M
 	
-	if print_info:
-		print('Normalized target absolute error on averages:')
-		print(avg_abserr)
-		print('Normalized target absolute error on covariance matrix:')
-		print(cov_abserr)
-		print()
-
 	# likelihood (not normalized)
 	if dx is None:
 		idy2 = 1 / dy ** 2 # just for efficiency
@@ -280,19 +243,7 @@ def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None)
 		def L(p, xstar):
 			return np.exp((-np.sum((y - f(xstar * dx + x0, *(V.dot(M * p + Q))))**2 * idy2) - np.sum(xstar ** 2) + chi20) / 2)
 	
-	# TARGET ERRORS FOR COMPUTING
-	
-	# target relative error on variance integrals
-	int_var_relerr = np.diag(cov_abserr) / dp0 ** 2 / sigma
-	
-	# target absolute error on average integrals
-	int_avg_abserr = avg_abserr / sigma
-	
-	# target absolute error on covariance integrals
-	int_cov_abserr = np.copy(cov_abserr) / sigma
-	np.fill_diagonal(int_cov_abserr, 0)
-	
-	# INTEGRALS
+	# INTEGRAND
 	
 	# integrand: [L, p0 * L, ..., pd * L, p0 * p0 * L, p0 * p1 * L, ..., p0 * pd * L, p1 * p1 * L, ..., pd * pd * L]
 	# change of variable: p = k * tan(theta), theta in (-pi/2, pi/2)
@@ -370,25 +321,41 @@ def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None)
 					axes.plot(xs, [fplot_m(x) for x in xs], '-k', label=R'$p_{%d}\cdot p_{%d}\cdot L$ along $p_{%d}=-p_{%d}$' % (i, j, i, j))
 					axes.legend(loc=1, fontsize='small')
 	
-	# takes the integration result and computes average and covariance dividing by normalization
-	def target(I):
-		out1 = [I[j] / I[0] for j in range(1, len(p0) + 1)]
-		out2 = [I[j + len(p0) + 1] / I[0] - out1[idxs[0][j]] * out1[idxs[1][j]] for j in range(len(idxs[0]))]
-		return out1 + out2
+	# INTEGRAL
 	
-	epsrel = np.zeros(cov0.shape)
-	epsrel[np.diag_indices(len(p0))] = int_var_relerr
+	# takes the integration result and computes average and covariance dividing by normalization
+	def normalize(I):
+		par = np.array([I[j] / I[0] for j in range(1, len(p0) + 1)])
+		cov_u = [I[j + len(par) + 1] / I[0] - par[idxs[0][j]] * par[idxs[1][j]] for j in range(len(idxs[0]))]
+		cov = np.empty(cov0.shape, dtype=object)
+		cov[idxs] = cov_u
+		cov.T[idxs] = cov[idxs]
+		return par, cov
+	
+	# do inverse variable transform
+	# then compute objects on which errors are defined: avg, var, (1-corr)**2
+	def target(I):
+		par, cov = normalize(I)
+		
+		par = V.dot(M * par + Q)
+		cov = V.dot(np.outer(M, M) * cov).dot(V.T)
+		
+		sigma = np.sqrt(np.diag(cov))
+		var_onemcor2 = (1 - cov / np.outer(sigma, sigma))**2
+		np.fill_diagonal(var_onemcor2, np.diag(cov))
+		
+		return np.concatenate((par, var_onemcor2[idxs]))
+	
+	epsrel = np.ones(cov0.shape) * onemcor_relerr / sigma * 2
+	np.fill_diagonal(epsrel, var_relerr / sigma)
 	epsrel = np.concatenate((np.zeros(len(p0)), epsrel[idxs]))
 	
-	epsabs = np.copy(int_cov_abserr)
-	epsabs = np.concatenate((int_avg_abserr, epsabs[idxs]))
+	epsabs = np.zeros(epsrel.shape)
+	epsabs[:len(p0)] = avg_abserr / sigma
 	
 	I = mc_integrator_2(integrand, bounds, target=target, epsrel=epsrel, epsabs=epsabs, print_info=print_info)
 	
-	par = np.array(I[:len(p0)])
-	cov = np.empty(cov0.shape, dtype=object)
-	cov[idxs] = I[len(p0):]
-	cov.T[idxs] = cov[idxs]
+	par, cov = normalize(I)
 	
 	func_mean = np.vectorize(lambda x: x.mean, otypes=['float64'])
 	func_sdev = np.vectorize(lambda x: x.sdev, otypes=['float64'])
@@ -428,8 +395,8 @@ def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None)
 
 f_sym = lambda x, a, b: a * sympy.sin(b * x)
 p0 = (-1, -10)
-x = np.linspace(0, 1, 100)
-dy = np.array([.05] * len(x))
+x = np.linspace(0, 1, 10)
+dy = np.array([.05] * len(x)) * 5
 dx = np.array([.05] * len(x)) * 0
 
 model = lab.FitModel(f_sym)
@@ -451,8 +418,9 @@ fig = pyplot.figure('fitbayes2')
 fig.clf()
 axes = fig.add_subplot(111)
 axes.errorbar(x, y, xerr=dx, yerr=dy, fmt=',k', zorder=0)
-axes.plot(x, f(x, *par0), '-r', zorder=1)
-axes.plot(x, f(x, *par), '--b', zorder=1.5)
+fx = np.linspace(min(x), max(x), 512)
+axes.plot(fx, f(fx, *par0), '-r', zorder=1)
+axes.plot(fx, f(fx, *par), '--b', zorder=1.5)
 axes.plot(x + out.delta_x, y + out.delta_y, '.k', zorder=2)
 
 pyplot.show()
