@@ -9,21 +9,24 @@ import sympy
 # TODO/NOTE
 #
 # mc_integrator_1
-# supportare le stesse funzioni di mc_integrator_2 (multidim con covarianza e target)
+# supportare le stesse funzioni di mc_integrator_2
 #
 # mc_integrator_2
 # eliminare gvar in uscita in modo che sia come mc_integrator_1
+# aggiungere condizione di terminazione nonzero
 #
 # fit_bayes
+# quando la stima iniziale è sbagliata ci mette un bel po', pensare se fare in automatico una pre-stima o se è cosa da utente/wrapper. Si può anche fare che il target decida di modificare il cambio di variabili, questo però richiede che mc_integrator_2 possa lavorare sul target anziché sull'integrando; se non è instabile potrebbe essere la soluzione più efficiente (non butta campioni).
+# gestire mc_integrator che restituisce None
+# gestire mc_integrator che passa normalizzazione nulla al target
+# mettere la precisione target negli argomenti, std_dig=1.5, cor_err=0.01, prob_err=0.01
+# aggiungere marginalize=[bool] per non calcolare/non mettere nei target i parametri che non interessano
 # aggiungere i priori, ad esempio quando fitto sinusoidi vede anche le armoniche
 # poter usare sia mc_integrator_1 che _2
 # print_info se è:
 # False, 0: non printare
 # True, 1: printa
 # n >= 2: passa n - 1 a mc_integrator_*
-# è lentiiissimo!
-# generalizzando il fit ML, non potremmo usare taylor più fini della loglikelihood?
-# con tanti parametri (es. errori sulle x) ci mette un sacco a rendersi conto del picco, forse è meglio usare importance sampling fisso (mc_integrator_1) anziché vegas.
 #
 # infine, spostare tutto in lab.py e aggiungere bayes='no','mc-auto','mc-basic','mc-vegas' a fit_generic
 
@@ -91,9 +94,10 @@ def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print
 	tI = None
 	I = None
 	results = None
+	cycle_nitn = 2
 	for i in range(1, 1 + max_cycles):
 		# INTEGRATION
-		nitn = 10 if i == 1 else 5
+		nitn = 10 if i == 1 else cycle_nitn
 		if print_info:
 			print()
 			print('***** Cycle %d *****' % i)
@@ -132,10 +136,10 @@ def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print
 		
 		# DECIDE VALUE OF INTEGRAL
 		# max last results with p-value in bounds.
-		nok = np.sum(np.cumprod((Q_bound < Qs) & (Qs < 1 - Q_bound)))
+		nok = np.sum(np.cumprod(Q_bound < Qs))
 		if nok == 1:
 			if print_info:
-				print('last two results has Q or 1-Q <= %.2g, continuing' % Q_bound)
+				print('last two results have Q = %.3g, continuing' % Qs[1])
 			continue
 		I = wavgs[nok - 1]
 		tI = target(I) # apply target transform
@@ -146,7 +150,7 @@ def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print
 		current_error = np.array([Ij.sdev for Ij in tI])
 		target_error = epsrel * np.abs([Ij.mean for Ij in tI]) + epsabs
 		if print_info:
-			print('considering last %d/%d results for weighted average (Q = %.2g),' % (nok, len(results), Qs[nok - 1]))
+			print('considering last %d/%d results for weighted average (Q = %.3g),' % (nok, len(results), Qs[nok - 1]))
 			print('which consist of about %s/%s function evaluations' % tuple(map(lambda x: lab.num2si(x, format='%.3g', space=''), (total_neval, np.sum(nevals)))))
 			print('last result:      I = {}'.format(target(wavgs[0])))
 			print('weighted average: I = {}'.format(tI))
@@ -157,7 +161,7 @@ def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print
 				print('Termination condition DI <= epsrel * I + epsabs satisfied.')
 			break
 		target_total_neval = np.max(np.round((current_error / target_error) ** 2 * total_neval))
-		target_neval = (target_total_neval - total_neval) / 5
+		target_neval = (target_total_neval - total_neval) / cycle_nitn
 		neval = int(max(neval, min(neval * 4, target_neval)))
 	
 	# RETURN
@@ -180,7 +184,8 @@ def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None)
 		print('dx = None' if dx is None else 'dx.shape = {}'.format(dx.shape))
 		print()
 		print('Starting estimate of parameters:')
-		print(lab.format_par_cov(par0, cov0))
+		print(lab.format_par_cov(p0, cov0))
+		start_est = (p0, cov0)
 		print()
 		
 	# TARGET ERRORS FOR RESULTS
@@ -208,7 +213,6 @@ def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None)
 	
 	if print_info:
 		print('Target relative error on standard deviations = %.3g' % std_relerr)
-		# print('Target absolute error on correlations = %.3g' % cor_abserr)
 		print('Target absolute error on averages:\n{}'.format(avg_abserr))
 		print()
 	
@@ -224,48 +228,53 @@ def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None)
 		print(lab.xe(p0, dp0))
 		print()
 	
-	# change variable: p0 -> 0, dp0 -> 1
-	M = dp0
-	Q = p0
-	dp0 = np.ones(len(p0))
-	p0 = np.zeros(len(p0))
+	# change variable: p0 -> C, dp0 -> 1
+	C = 10
+	M = np.copy(dp0)
+	Q = np.copy(p0) - C * M
+	dp0 /= M
+	p0 = (p0 - Q) / M
 	
 	# likelihood (not normalized)
+	idy2 = 1 / dy ** 2
+	vM = M.reshape((1,)+M.shape)
+	vQ = Q.reshape((1,)+Q.shape)
+	vx = x.reshape((1,)+x.shape)
+	vy = y.reshape((1,)+y.shape)
 	if dx is None:
-		idy2 = 1 / dy ** 2 # just for efficiency
-		chi20 = np.sum((y - f(x, *(V.dot(M * 0 + Q))))**2 * idy2) # initial normalization with L(0) == 1
+		chi20 = np.sum((y - f(x, *(V.dot(M * C + Q))))**2 * idy2) # initial normalization with L(C) == 1
 		def L(p):
-			return np.exp((-np.sum((y - f(x, *(V.dot(M * p + Q))))**2 * idy2) + chi20) / 2)
+			return np.exp((-np.sum((vy - f(vx, *np.einsum('ik,jk', V, vM * p + vQ).reshape(p.shape[::-1]+(1,))))**2 * idy2, axis=1) + chi20) / 2)
 	else:
-		idy2 = 1 / dy ** 2
-		chi20 = np.sum((y - f(x0, *(V.dot(M * 0 + Q))))**2 * idy2)
+		chi20 = np.sum((y - f(x0, *(V.dot(M * C + Q))))**2 * idy2) # initial normalization with L(C, 0) == 1
 		# change variable: x -> 0, dx -> 1
 		def L(p, xstar):
-			return np.exp((-np.sum((y - f(xstar * dx + x0, *(V.dot(M * p + Q))))**2 * idy2) - np.sum(xstar ** 2) + chi20) / 2)
+			return np.exp((-np.sum((vy - f(vx, *np.einsum('ik,jk', V, vM * p + vQ).reshape(p.shape[::-1]+(1,))))**2 * idy2, axis=1) - np.sum(xstar ** 2, axis=1) + chi20) / 2)
 	
 	# INTEGRAND
 	
 	# integrand: [L, p0 * L, ..., pd * L, p0 * p0 * L, p0 * p1 * L, ..., p0 * pd * L, p1 * p1 * L, ..., pd * pd * L]
-	# change of variable: p = k * tan(theta), theta in (-pi/2, pi/2)
+	# change of variable: p = C + k * tan(theta), theta in (-pi/2, pi/2)
+	idxs = np.triu_indices(len(p0))
 	if dx is None:
 		bounds = [(-np.pi/2, np.pi/2)] * len(p0)
-		idxs = np.triu_indices(len(p0))
-		k = 2
+		k = 1/2
+		@vegas.batchintegrand
 		def integrand(theta):
 			t = np.tan(theta)
-			p = k * t
-			l = np.prod(k * (1 + t ** 2)) * L(p)
-			return np.concatenate(((1,), p, np.outer(p, p)[idxs])) * l
+			p = C + k * t
+			l = np.prod(k * (1 + t ** 2), axis=1) * L(p)
+			return np.concatenate((np.ones(l.shape+(1,)), p, np.einsum('ij,il->ijl', p, p)[(...,)+idxs]), axis=1) * l.reshape(l.shape+(1,))
 	else:
 		bounds = [(-np.pi/2, np.pi/2)] * (len(p0) + len(x))
-		idxs = np.triu_indices(len(p0))
-		k = 1
+		k = 1/2
+		@vegas.batchintegrand
 		def integrand(theta):
 			t = np.tan(theta)
 			P = k * t
-			p = P[:len(p0)]
-			l = np.prod(k * (1 + t ** 2)) * L(p, P[len(p0):])
-			return np.concatenate(((1,), p, np.outer(p, p)[idxs])) * l
+			p = C + P[:,:len(p0)]
+			l = np.prod(k * (1 + t ** 2), axis=1) * L(p, P[:,len(p0):])
+			return np.concatenate((np.ones(l.shape+(1,)), p, np.einsum('ij,il->ijl', p, p)[(...,)+idxs]), axis=1) * l.reshape(l.shape+(1,))
 	
 	# figure showing sections of the integrand
 	if not (plot_figure is None):
@@ -277,48 +286,48 @@ def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None)
 		
 		for i in range(len(p0)):
 			axes = plot_figure.add_subplot(G[i, 0])
-			theta = np.zeros(len(p0) if dx is None else (len(p0) + len(x)))
+			theta = np.zeros((len(xs), len(p0) if dx is None else (len(p0) + len(x))))
 			def fplot(theta_i):
-				theta[i] = theta_i
-				return integrand(theta)[0]
-			axes.plot(xs, [fplot(x) for x in xs], '-k', label=R'$L$ along $p_{%d}$' % (i))
+				theta[:,i] = theta_i
+				return integrand(theta)[:,0]
+			axes.plot(xs, fplot(xs), '-k', label=R'$L$ along $p_{%d}$' % (i))
 			axes.legend(loc=1)
 
 		for i in range(len(p0)):
 			axes = plot_figure.add_subplot(G[i, 1])
-			theta = np.zeros(len(p0) if dx is None else (len(p0) + len(x)))
+			theta = np.zeros((len(xs), len(p0) if dx is None else (len(p0) + len(x))))
 			def fplot(theta_i):
-				theta[i] = theta_i
-				return integrand(theta)[1 + i]
-			axes.plot(xs, [fplot(x) for x in xs], '-k', label=R'$p_{%d}\cdot L$ along $p_{%d}$' % (i, i))
+				theta[:,i] = theta_i
+				return integrand(theta)[:,1 + i]
+			axes.plot(xs, fplot(xs), '-k', label=R'$p_{%d}\cdot L$ along $p_{%d}$' % (i, i))
 			axes.legend(loc=1, fontsize='small')
 		
 		mat = np.empty(cov0.shape, dtype='uint32')
 		mat[idxs] = np.arange(len(idxs[0]))
 		for i in range(len(p0)):
 			for j in range(i, len(p0)):
-				theta = np.zeros(len(p0) if dx is None else (len(p0) + len(x)))
+				theta = np.zeros((len(xs), len(p0) if dx is None else (len(p0) + len(x))))
 				if i == j:
 					axes = plot_figure.add_subplot(G[i, i + 2])
 					def fplot(theta_i):
-						theta[i] = theta_i
-						return integrand(theta)[1 + len(p0) + mat[i, i]]
-					axes.plot(xs, [fplot(x) for x in xs], '-k', label=R'$p_{%d}^2\cdot L$ along $p_{%d}$' % (i, i))
+						theta[:,i] = theta_i
+						return integrand(theta)[:,1 + len(p0) + mat[i, i]]
+					axes.plot(xs, fplot(xs), '-k', label=R'$p_{%d}^2\cdot L$ along $p_{%d}$' % (i, i))
 					axes.legend(loc=1, fontsize='small')
 				else: # i != j
 					def fplot_p(theta_ij):
-						theta[i] = theta_ij
-						theta[j] = theta_ij
-						return integrand(theta)[1 + len(p0) + mat[i, j]]
+						theta[:,i] = theta_ij
+						theta[:,j] = theta_ij
+						return integrand(theta)[:,1 + len(p0) + mat[i, j]]
 					def fplot_m(theta_ij):
-						theta[i] = theta_ij
-						theta[j] = -theta_ij
-						return integrand(theta)[1 + len(p0) + mat[i, j]]
+						theta[:,i] = theta_ij
+						theta[:,j] = -theta_ij
+						return integrand(theta)[:,1 + len(p0) + mat[i, j]]
 					axes = plot_figure.add_subplot(G[i, j + 2])
-					axes.plot(xs, [fplot_p(x) for x in xs], '-k', label=R'$p_{%d}\cdot p_{%d}\cdot L$ along $p_{%d}=p_{%d}$' % (i, j, i, j))
+					axes.plot(xs, fplot_p(xs), '-k', label=R'$p_{%d}\cdot p_{%d}\cdot L$ along $p_{%d}=p_{%d}$' % (i, j, i, j))
 					axes.legend(loc=1, fontsize='small')
 					axes = plot_figure.add_subplot(G[j, i + 2])
-					axes.plot(xs, [fplot_m(x) for x in xs], '-k', label=R'$p_{%d}\cdot p_{%d}\cdot L$ along $p_{%d}=-p_{%d}$' % (i, j, i, j))
+					axes.plot(xs, fplot_m(xs), '-k', label=R'$p_{%d}\cdot p_{%d}\cdot L$ along $p_{%d}=-p_{%d}$' % (i, j, i, j))
 					axes.legend(loc=1, fontsize='small')
 	
 	# INTEGRAL
@@ -379,6 +388,8 @@ def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None)
 	mcov = func_mean(cov)
 		
 	if print_info:
+		print('Starting estimate was:')
+		print(lab.format_par_cov(*start_est))
 		print('Result:')
 		print(lab.format_par_cov(mpar, mcov))
 		print('Averages with computing errors:')
@@ -393,11 +404,11 @@ def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None)
 	
 	return mpar, mcov, dpar, dcov
 
-f_sym = lambda x, a, b: a * sympy.sin(b * x)
-p0 = (-1, -10)
+f_sym = lambda x, a, b, c: a * x**2 + b*x + c
+p0 = (-1, -2, -3)
 x = np.linspace(0, 1, 10)
-dy = np.array([.05] * len(x)) * 5
-dx = np.array([.05] * len(x)) * 0
+dy = np.array([.05] * len(x)) * 1
+dx = np.array([.05] * len(x)) * 1
 
 model = lab.FitModel(f_sym)
 f = model.f()
@@ -405,11 +416,11 @@ f = model.f()
 y = f(x, *p0) + np.random.randn(len(x)) * dy
 x += np.random.randn(len(x)) * dx
 
-par0, cov0, out = lab.fit_generic(model, x, y, dx=dx, dy=dy, p0=p0, full_output=True, method='linodr')
+par0, cov0, out = lab.fit_generic(model, x, y, dx=dx, dy=dy, p0=p0, full_output=True, method='odrpack')
 
 fig = pyplot.figure('fitbayes')
 
-par, cov, dpar, dcov = fit_bayes(f, x, y, None, dy, par0, cov0, x + out.delta_x, print_info=True, plot_figure=fig)
+par, cov, dpar, dcov = fit_bayes(f, x, y, dx, dy, par0, cov0, x + out.delta_x, print_info=True, plot_figure=fig)
 
 print(lab.format_par_cov(par0, cov0))
 print(lab.format_par_cov(par, cov))
