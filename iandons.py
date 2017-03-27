@@ -139,6 +139,19 @@ def maketab(*columns, errors='all', precision=3):
 	)
 	return beginning + inner + ending
 
+
+def giverrs(typ):
+	while 1:
+		a = input()
+		if a == '\n':
+			continue
+		a = a.split()
+		if len(a) != 2:
+			break
+		val = eval(a[0])
+		unit = a[1]
+		print(mme(val, unit, typ))
+
 # *********************** FACTORIES *************************
 
 
@@ -403,7 +416,7 @@ def data_from_oscill(filename, verbose=True, mode='t', getall=False):
 				if __debug:
 					print("Trovata roba in ", l, " --->", (w[0], float(w[1]), float(w[2]), float(w[3])))
 			except:
-			# print("datino")
+				# print("datino")
 				if(getall):
 					k = reg.findall(l)
 					print(k)
