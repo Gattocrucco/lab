@@ -13,6 +13,11 @@ import numdifftools as numdiff
 
 # TODO
 #
+# fit_plot (nuova funzione)
+# plotta una densità di curve di best fit
+# fit_plot(x, f or FitModel, par, cov or FitOutput, n=100, axes=gca(), **kw)
+# **kw passed to axes.plot
+#
 # util_mm_esr
 # aggiungere possibilità di configurazione degli errori (in particolare non contare l'errore percentuale) usando il parametro sqerr
 #
