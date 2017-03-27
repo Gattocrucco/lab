@@ -12,11 +12,10 @@ import sympy
 # supportare le stesse funzioni di mc_integrator_2
 #
 # mc_integrator_2
-# eliminare gvar in uscita in modo che sia come mc_integrator_1
 # aggiungere condizione di terminazione nonzero
 #
 # fit_bayes
-# quando la stima iniziale è sbagliata ci mette un bel po', pensare se fare in automatico una pre-stima o se è cosa da utente/wrapper. Si può anche fare che il target decida di modificare il cambio di variabili, questo però richiede che mc_integrator_2 possa lavorare sul target anziché sull'integrando; se non è instabile potrebbe essere la soluzione più efficiente (non butta campioni).
+# cambiare variabile durante l'integrazione, si può usare un algoritmo continuo o a soglia
 # gestire mc_integrator che restituisce None
 # gestire mc_integrator che passa normalizzazione nulla al target
 # mettere la precisione target negli argomenti, std_dig=1.5, cor_err=0.01, prob_err=0.01
@@ -74,7 +73,7 @@ def mc_integrator(f_over_dist, dist_sampler, epsrel=1e-4, epsabs=1e-4, start_n=1
 		i += 1
 	return I, DI
 
-def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print_info=True, max_cycles=20, target=lambda I: I, Q_bound=0.001):
+def mc_integrator_2(integrand, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print_info=True, max_cycles=20, target_result=lambda I: I, target_error=lambda I: I, Q_bound=0.001):
 	if print_info:
 		print('############### mc_integrator_2 ###############')
 		print()
@@ -102,15 +101,22 @@ def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print
 			print()
 			print('***** Cycle %d *****' % i)
 			print('Integrating with neval=%d, nitn=%d...' % (neval, nitn))
-		result = integ(f, nitn=nitn, neval=neval) # place where things are actually done
-		new_results = np.array(result.itn_results)
-		if len(new_results.shape) == 3 and new_results.shape[2] == 1:
-			new_results = new_results[:,:,0]
+		result = integ(integrand, nitn=nitn, neval=neval) # place where things are actually done
+		new_results_raw = np.array(result.itn_results)
+		
+		# APPLY TARGET AND SAVE RESULTS
+		if len(new_results_raw.shape) == 3 and new_results_raw.shape[2] == 1:
+			new_results_raw = new_results_raw[:,:,0]
 		if print_info:
 			print(    'itn   raw integrals')
-			for j in range(len(new_results)):
-				print('%3d   {}'.format(new_results[j]) % (j + len([] if results is None else results) + 1))
+			for j in range(len(new_results_raw)):
+				print('%3d   {}'.format(new_results_raw[j]) % (j + len([] if results is None else results) + 1))
 			print()
+		new_results_0 = target_result(new_results_raw[0])
+		new_results = np.empty((len(new_results_raw), len(new_results_0)), dtype=gvar.GVar)
+		new_results[0] = new_results_0
+		for j in range(1, len(new_results)):
+			new_results[j] = target_result(new_results_raw[j])
 		results = np.concatenate((results, new_results)) if not (results is None) else new_results
 		nevals += [neval] * nitn
 		
@@ -118,7 +124,6 @@ def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print
 		# compute weighted averages and p-values for the last k results for any k.
 		wavgs = np.empty(results.shape, dtype=gvar.GVar)
 		Qs = np.empty(len(results))
-		# chisqs = np.empty(len(results))
 		wavg_nom = 0
 		wavg_den = 0
 		for j in range(len(results)):
@@ -131,7 +136,6 @@ def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print
 			for k in range(j + 1):
 				Rk = results[-k - 1]
 				chisq += np.sum(np.fromiter(map(lambda x, y: (x.mean - y.mean)**2 / x.var, Rk, wavg), 'float64', count=len(Rk)))
-			# chisqs[j] = chisq
 			Qs[j] = stats.chi2.sf(chisq, j * len(R)) if j != 0 else 0.5
 		
 		# DECIDE VALUE OF INTEGRAL
@@ -142,25 +146,25 @@ def mc_integrator_2(f, bounds, epsrel=1e-4, epsabs=1e-4, start_neval=1000, print
 				print('last two results have Q = %.3g, continuing' % Qs[1])
 			continue
 		I = wavgs[nok - 1]
-		tI = target(I) # apply target transform
+		tI = target_error(I)
 		
 		# DECIDE WHAT NEXT
 		# check if condition on errors is satisfied, else estimate necessary samples.
 		total_neval = np.sum(nevals[-nok:])
 		current_error = np.array([Ij.sdev for Ij in tI])
-		target_error = epsrel * np.abs([Ij.mean for Ij in tI]) + epsabs
+		threshold_error = epsrel * np.abs([Ij.mean for Ij in tI]) + epsabs
 		if print_info:
 			print('considering last %d/%d results for weighted average (Q = %.3g),' % (nok, len(results), Qs[nok - 1]))
 			print('which consist of about %s/%s function evaluations' % tuple(map(lambda x: lab.num2si(x, format='%.3g', space=''), (total_neval, np.sum(nevals)))))
-			print('last result:      I = {}'.format(target(wavgs[0])))
-			print('weighted average: I = {}'.format(tI))
+			print('last result:      I = {}'.format(wavgs[0]))
+			print('weighted average: I = {}'.format(I))
 			print('                 DI = {}'.format(current_error))
-			print('epsrel * I + epsabs = {}'.format(target_error))
-		if all(current_error <= target_error):
+			print('epsrel * I + epsabs = {}'.format(threshold_error))
+		if all(current_error <= threshold_error):
 			if print_info:
 				print('Termination condition DI <= epsrel * I + epsabs satisfied.')
 			break
-		target_total_neval = np.max(np.round((current_error / target_error) ** 2 * total_neval))
+		target_total_neval = np.max(np.round((current_error / threshold_error) ** 2 * total_neval))
 		target_neval = (target_total_neval - total_neval) / cycle_nitn
 		neval = int(max(neval, min(neval * 4, target_neval)))
 	
@@ -332,27 +336,32 @@ def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None)
 	
 	# INTEGRAL
 	
-	# takes the integration result and computes average and covariance dividing by normalization
-	def normalize(I):
-		par = np.array([I[j] / I[0] for j in range(1, len(p0) + 1)])
-		cov_u = [I[j + len(par) + 1] / I[0] - par[idxs[0][j]] * par[idxs[1][j]] for j in range(len(idxs[0]))]
-		cov = np.empty(cov0.shape, dtype=object)
-		cov[idxs] = cov_u
+	def matrify(I):
+		par = np.asarray(I[:len(p0)])
+		cov = np.empty(cov0.shape, dtype=gvar.GVar)
+		cov[idxs] = I[len(p0):]
 		cov.T[idxs] = cov[idxs]
 		return par, cov
 	
+	# takes the integration result and computes average and covariance dividing by normalization
+	def normalize(I):
+		par = [I[j] / I[0] for j in range(1, len(p0) + 1)]
+		cov_u = [I[j + len(par) + 1] / I[0] - par[idxs[0][j]] * par[idxs[1][j]] for j in range(len(idxs[0]))]
+		return matrify(par + cov_u)
+	
 	# do inverse variable transform
-	# then compute objects on which errors are defined: avg, var, (1-corr)**2
-	def target(I):
+	def target_result(I):
 		par, cov = normalize(I)
-		
 		par = V.dot(M * par + Q)
 		cov = V.dot(np.outer(M, M) * cov).dot(V.T)
-		
+		return np.concatenate((par, cov[idxs]))
+	
+	# compute objects on which errors are defined: avg, var, (1-corr)**2
+	def target_error(I):
+		par, cov = matrify(I)
 		sigma = np.sqrt(np.diag(cov))
 		var_onemcor2 = (1 - cov / np.outer(sigma, sigma))**2
 		np.fill_diagonal(var_onemcor2, np.diag(cov))
-		
 		return np.concatenate((par, var_onemcor2[idxs]))
 	
 	epsrel = np.ones(cov0.shape) * onemcor_relerr / sigma * 2
@@ -362,9 +371,11 @@ def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None)
 	epsabs = np.zeros(epsrel.shape)
 	epsabs[:len(p0)] = avg_abserr / sigma
 	
-	I = mc_integrator_2(integrand, bounds, target=target, epsrel=epsrel, epsabs=epsabs, print_info=print_info)
+	I = mc_integrator_2(integrand, bounds, target_result=target_result, target_error=target_error, epsrel=epsrel, epsabs=epsabs, print_info=print_info)
 	
-	par, cov = normalize(I)
+	# FINALLY, RESULT!
+	
+	par, cov = matrify(I)
 	
 	func_mean = np.vectorize(lambda x: x.mean, otypes=['float64'])
 	func_sdev = np.vectorize(lambda x: x.sdev, otypes=['float64'])
@@ -372,15 +383,10 @@ def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None)
 	if print_info:
 		print()
 		print('Normalized result:')
-		print(lab.format_par_cov(func_mean(par), func_mean(cov)))
+		print(lab.format_par_cov(func_mean((V.T.dot(par) - Q) / M), func_mean(V.T.dot(cov).dot(V) / np.outer(M, M))))
 		print('Diagonalized result:')
-		print(lab.format_par_cov(func_mean(M * par + Q), func_mean(np.outer(M, M) * cov)))
-		
-	# INVERSE VARIABLE TRANSFORM
-	
-	par = V.dot(M * par + Q)
-	cov = V.dot(np.outer(M, M) * cov).dot(V.T)
-	
+		print(lab.format_par_cov(func_mean(V.T.dot(par)), func_mean(V.T.dot(cov).dot(V))))
+			
 	dpar = func_sdev(par)
 	dcov = func_sdev(cov)
 	
@@ -408,7 +414,7 @@ f_sym = lambda x, a, b, c: a * x**2 + b*x + c
 p0 = (-1, -2, -3)
 x = np.linspace(0, 1, 10)
 dy = np.array([.05] * len(x)) * 1
-dx = np.array([.05] * len(x)) * 1
+dx = np.array([.05] * len(x)) * 2
 
 model = lab.FitModel(f_sym)
 f = model.f()
