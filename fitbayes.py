@@ -1,12 +1,15 @@
 import numpy as np
 import lab
 import time
-from scipy import stats, linalg, integrate
+from scipy import stats, linalg, integrate, optimize
 import vegas, gvar
 from matplotlib import gridspec, pyplot
 import sympy
 
 # TODO/NOTE
+#
+# _fit_generic_ml
+# jacobiano, max_nfev = 200*, check dx vel dy==0, output
 #
 # mc_integrator_1
 # supportare le stesse funzioni di mc_integrator_2
@@ -15,7 +18,8 @@ import sympy
 # aggiungere condizione di terminazione nonzero
 #
 # fit_bayes
-# il cambio di variabile dinamico non funziona bene, sembra essere colpito dai risultati iniziali sbagliati e dal fatto che vegas deve riadattarsi. Bisogna che tenga conto dell'errore del risultato.
+# usare massima verosimiglianza con anche le x, permette anche di unificare il codice x-non x.
+# il cambio di variabile dinamico deve tener conto dell'errore del risultato attuale
 # gestire mc_integrator che restituisce None
 # gestire mc_integrator che passa normalizzazione nulla al target
 # mettere la precisione target negli argomenti, std_dig=1.5, cor_err=0.01, prob_err=0.01
@@ -28,6 +32,23 @@ import sympy
 # n >= 2: passa n - 1 a mc_integrator_*
 #
 # infine, spostare tutto in lab.py e aggiungere bayes='no','mc-auto','mc-basic','mc-vegas' a fit_generic
+
+def _fit_generic_ml(f, x, y, dx, dy, p0, **kw):
+	idy = 1 / dy
+	idx = 1 / dx
+	def fun(px):
+		xstar = px[len(p0):]
+		return np.concatenate(((y - f(xstar, *px[:len(p0)])) * idy, (x - xstar) * idx))
+	px_scale = np.concatenate((np.ones(len(p0)), dx))
+	result = optimize.least_squares(fun, np.concatenate((p0, x)), x_scale=px_scale, **kw)
+	par = result.x
+	_, s, VT = linalg.svd(result.jac, full_matrices=False)
+	threshold = np.finfo(float).eps * max(result.jac.shape) * s[0]
+	s = s[s > threshold]
+	VT = VT[:s.size]
+	cov = np.dot(VT.T / s**2, VT)
+	print(result.message)
+	return par, cov
 
 def mc_integrator(f_over_dist, dist_sampler, epsrel=1e-4, epsabs=1e-4, start_n=10000, max_bunch=10000000, print_info=True):
 	summ = 0.0
@@ -473,32 +494,81 @@ def fit_bayes(f, x, y, dx, dy, p0, cov0, x0, print_info=False, plot_figure=None)
 
 f_sym = lambda x, a, b: a * x**2 + b
 p0 = (-1, -10)
-x = np.linspace(0, 1, 30)
-dy = np.array([.05] * len(x)) * 1
-dx = np.array([.05] * len(x)) * 4
+x0 = np.linspace(0, 1, 10)
+dy = np.array([.05] * len(x0)) * 1
+dx = np.array([.05] * len(x0)) * 4
 
 model = lab.FitModel(f_sym)
 f = model.f()
 
-y = f(x, *p0) + np.random.randn(len(x)) * dy
-x += np.random.randn(len(x)) * dx
+y = f(x0, *p0) + np.random.randn(len(x0)) * dy
+x = x0 + np.random.randn(len(x0)) * dx
 
-par0, cov0, out = lab.fit_generic(model, x, y, dx=dx, dy=dy, p0=p0, full_output=True, method='linodr')
+nitn = 400*(len(x)+len(p0))
 
-fig = pyplot.figure('fitbayes')
+# ODR
 
-par, cov, dpar, dcov = fit_bayes(f, x, y, dx, dy, par0, cov0, x + out.delta_x, print_info=True, plot_figure=fig)
+par0, cov0, out = lab.fit_generic(model, x, y, dx=dx, dy=dy, p0=p0, full_output=True, method='odrpack', print_info=1, maxit=nitn)
+
+# MAXIMUM LIKELIHOOD
+
+PAR, COV = _fit_generic_ml(f, x, y, dx, dy, p0, max_nfev=nitn)
+
+par1 = PAR[:len(p0)]
+cov1 = COV[:len(p0),:len(p0)]
+
+X = PAR[len(p0):]
+
+# BAYESIAN AVERAGE
+
+fig = pyplot.figure('fitbayes_odr')
+parA, covA, _, _ = fit_bayes(f, x, y, dx, dy, par0, cov0, x + out.delta_x, print_info=True, plot_figure=fig)
+
+fig = pyplot.figure('fitbayes_ml')
+parB, covB, _, _ = fit_bayes(f, x, y, dx, dy, par1, cov1, X, print_info=True, plot_figure=fig)
+
+# RESULTS
 
 print(lab.format_par_cov(par0, cov0))
-print(lab.format_par_cov(par, cov))
+print(lab.format_par_cov(par1, cov1))
+print(lab.format_par_cov(parA, covA))
+print(lab.format_par_cov(parB, covB))
+print(p0)
 
-fig = pyplot.figure('fitbayes2')
-fig.clf()
-axes = fig.add_subplot(111)
-axes.errorbar(x, y, xerr=dx, yerr=dy, fmt=',k', zorder=0)
+# PLOT OF FITS
+
 fx = np.linspace(min(x), max(x), 512)
-axes.plot(fx, f(fx, *par0), '-r', zorder=1)
-axes.plot(fx, f(fx, *par), '--b', zorder=1.5)
-axes.plot(x + out.delta_x, y + out.delta_y, '.k', zorder=2)
+fig = pyplot.figure('fitbayes_plot')
+fig.clf()
+fig.set_tight_layout(True)
+axes = fig.add_subplot(111)
 
+# PARENT DISTRIBUTION
+axes.plot(fx, f(fx, *p0), '-', color=[.7]*3, linewidth=4, label='parent', zorder=-1)
+axes.plot(x0, f(x0, *p0), '.', color=[.7]*3, markersize=16, zorder=-1)
+for i in range(len(x0)):
+	axes.plot([x0[i], x[i]], [f(x0[i], *p0), y[i]], '--', color=[.7]*3, zorder=-1, linewidth=4)
+
+# SIMULATED DATA
+axes.errorbar(x, y, xerr=dx, yerr=dy, fmt=',k', zorder=0, label='data')
+
+# ODR 
+axes.plot(fx, f(fx, *par0), '-r', zorder=1, label='odr', linewidth=2)
+axes.plot(x + out.delta_x, y + out.delta_y, '.r', zorder=1, markersize=8)
+for i in range(len(x)):
+	axes.plot([x[i], (x + out.delta_x)[i]], [y[i], (y + out.delta_y)[i]], '--r', zorder=1, linewidth=2)
+
+# LIKELIHOOD
+axes.plot(fx, f(fx, *par1), '-b', zorder=2, label='ml', linewidth=1)
+axes.plot(X, f(X, *par1), '.b', zorder=2, markersize=4)
+for i in range(len(X)):
+	axes.plot([x[i], X[i]], [y[i], f(X[i], *par1)], '--b', zorder=2, linewidth=1)
+
+# BAYESIAN A
+axes.plot(fx, f(fx, *parA), '-g', zorder=3, label='bayes_odr', linewidth=1)
+
+# BAYESIAN B
+axes.plot(fx, f(fx, *parB), '-y', zorder=4, label='bayes_ml', linewidth=1)
+
+axes.legend(loc=0)
 pyplot.show()
