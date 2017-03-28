@@ -8,7 +8,7 @@ import time
 from scipy import odr, optimize, stats, special, linalg
 import os
 import sympy
-from collections import Counter
+from collections import Counter # TODO sostituire con np.unique
 import numdifftools as numdiff
 
 # TODO
@@ -16,7 +16,11 @@ import numdifftools as numdiff
 # fit_plot (nuova funzione)
 # plotta una densità di curve di best fit
 # fit_plot(x, f or FitModel, par, cov or FitOutput, n=100, axes=gca(), **kw)
-# **kw passed to axes.plot
+# **kw passed to axes.plot, but label is intercepted and added to one.
+#
+# FitOutput
+# aggiungere upar se è disponibile uncertainties ((u2, v2, sum2) = uncertainties.correlated_values([1, 10, 21], cov_matrix))
+# aggiungere dpar e dcov
 #
 # util_mm_esr
 # aggiungere possibilità di configurazione degli errori (in particolare non contare l'errore percentuale) usando il parametro sqerr
@@ -281,9 +285,9 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		
 		M = odr.Model(fcn, fjacb=fjacb, fjacd=fjacd)
 		data = odr.RealData(x, y, sx=dx, sy=dy)
-		ODR = odr.ODR(data, M, beta0=p0)
+		ODR = odr.ODR(data, M, beta0=p0, **kw)
 		ODR.set_iprint(init=print_info > 1, iter=print_info > 2, final=print_info > 1)
-		output = ODR.run(**kw)
+		output = ODR.run()
 		par = output.beta
 		cov = output.cov_beta
 		
@@ -369,6 +373,9 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 	
 	# RETURN
 
+	if print_info > 0:
+		print('############## END fit_generic ##############')
+	
 	if full_output:
 		return par, cov, out
 	else:
