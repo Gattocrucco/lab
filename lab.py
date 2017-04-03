@@ -13,6 +13,7 @@ import numdifftools as numdiff
 import uncertainties
 
 # TODO
+# rinominare *fit_generic* *fit_curve* e FitModel CurveModel
 #
 # fit_plot (nuova funzione)
 # plotta una densità di curve di best fit
@@ -20,14 +21,7 @@ import uncertainties
 # **kw passed to axes.plot, but label is intercepted and added to one.
 #
 # FitModel
-# implementare le derivate non analitiche
 # verificare se il modello simbolico è del tipo p_i*h_i(x) (hessiana nulla)
-#
-# util_mm_esr
-# aggiungere possibilità di configurazione degli errori (in particolare non contare l'errore percentuale) usando il parametro sqerr
-#
-# _fit_generic_odr
-# usare least_squares
 #
 # _fit_generic_ml
 # supportare dx == 0 non ovunque
@@ -40,6 +34,7 @@ import uncertainties
 # pfix = [True, False ...] i True vengono bloccati
 # pfix = [0, 3, 5...] i parametri a questi indici vengono bloccati
 # bounds
+# odrpack: if dx is none, use ODR.set_job(fit_type=2)
 #
 # fit_oversampling
 # sostituire Counter con unique
@@ -121,46 +116,67 @@ def _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=True, conv_d
 			break
 	return par, cov, cycles
 
-def _fit_generic_odr(f, dfdx, dfdps, dfdpdxs, x, y, dx, dy, p0, **kw):
+class _Nonedict(dict):
+	
+	def __init__(self, **kw):
+		for k in kw:
+			if not (kw[k] is None):
+				self[k] = kw[k]
+
+def _fit_generic_odr(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, dfdp=None, dfdpdx=None, **kw):
 	dy2 = dy**2
 	dx2 = dx**2
-	def residual(p):
+	def fun(p):
 		return (y - f(x, *p)) / np.sqrt(dy2 + dfdx(x, *p)**2 * dx2)
-	if dfdx is None or dfdps is None or dfdpdxs is None:
-		jac = None
-	else:
-		rt = np.empty((len(p0), len(x)))
+	if not ((dfdps is None or dfdpdxs is None) and (dfdp is None or dfdpdx is None)):
+		rt = np.empty((len(x), len(p0)))
 		def jac(p):
 			sdfdx = dfdx(x, *p)
 			rad = dy2 + sdfdx**2 * dx2
 			srad = np.sqrt(rad)
 			res = (y - f(x, *p)) * dx2 * sdfdx / srad
-			for i in range(len(p)):
-				rt[i] = - (dfdps[i](x, *p) * srad + dfdpdxs[i](x, *p) * res) / rad
+			if not (dfdps is None or dfdpdxs is None):
+				for i in range(len(p)):
+					rt[:,i] = - (dfdps[i](x, *p) * srad + dfdpdxs[i](x, *p) * res) / rad
+			else:
+				rt[:] = - (dfdp(x, *p) * srad.reshape(-1,1) + dfdpdx(x, *p) * res.reshape(-1,1)) / rad.reshape(-1,1)
 			return rt
-	par, cov, _, _, _ = optimize.leastsq(residual, p0, Dfun=jac, col_deriv=True, full_output=True, **kw)
-	return par, cov
+	else:
+		jac = None
+	kw.update(_Nonedict(jac=jac))
+	result = optimize.least_squares(fun, p0, **kw)
+	par = result.x
+	_, s, VT = linalg.svd(result.jac, full_matrices=False)
+	threshold = np.finfo(float).eps * max(result.jac.shape) * s[0]
+	s = s[s > threshold]
+	VT = VT[:s.size]
+	cov = np.dot(VT.T / s**2, VT)
+	return par, cov, result
 
-def _fit_generic_ml(f, dfdx, dfdps, x, y, dx, dy, p0, **kw):
+def _fit_generic_ml(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdp=None, **kw):
 	idy = 1 / dy
 	idx = 1 / dx
 	def fun(px):
 		xstar = px[-len(x):]
 		return np.concatenate(((y - f(xstar, *px[:len(p0)])) * idy, (x - xstar) * idx))
-	if dfdx is None or dfdps is None:
-		jac = None
-	else:
+	if not (dfdx is None) and not (dfdps is None and dfdp is None):
 		jacm = np.zeros((len(y) + len(x), len(p0) + len(x)))
 		def jac(px):
 			p = px[:len(p0)]
 			xstar = px[-len(x):]
-			for i in range(len(p0)):
-				jacm[:len(y), i] = -dfdps[i](xstar, *p) * idy
+			if not dfdps is None:
+				for i in range(len(p0)):
+					jacm[:len(y), i] = -dfdps[i](xstar, *p) * idy
+			else:
+				jacm[:len(y), :len(p0)] = -dfdp(xstar, *p) * idy
 			np.fill_diagonal(jacm[:len(y), -len(x):], -dfdx(xstar, *p) * idy)
 			np.fill_diagonal(jacm[-len(x):, -len(x):], -idx)
 			return jacm
+	else:
+		jac = None
 	px_scale = np.concatenate((np.ones(len(p0)), dx))
-	result = optimize.least_squares(fun, np.concatenate((p0, x)), jac=jac, x_scale=px_scale, **kw)
+	kw.update(_Nonedict(jac=jac))
+	result = optimize.least_squares(fun, np.concatenate((p0, x)), x_scale=px_scale, **kw)
 	par = result.x
 	_, s, VT = linalg.svd(result.jac, full_matrices=False)
 	threshold = np.finfo(float).eps * max(result.jac.shape) * s[0]
@@ -171,13 +187,13 @@ def _fit_generic_ml(f, dfdx, dfdps, x, y, dx, dy, p0, **kw):
 
 class FitOutput:
 	
-	def __init__(self, par=None, cov=None, px=None, pxcov=None, np=None, datax=None, datay=None, fitx=None, fity=None, chisq=None, delta_x=None, delta_y=None, method=None, rawoutput=None, check=True):
+	def __init__(self, par=None, cov=None, px=None, pxcov=None, nump=None, datax=None, datay=None, fitx=None, fity=None, chisq=None, delta_x=None, delta_y=None, method=None, rawoutput=None, check=True):
 		if not (px is None):
 			self.px = px
-			if np is None:
-				np = -len(datax)
-			self.par = px[:np]
-			self.fitx = px[np:]
+			if nump is None:
+				nump = -len(datax)
+			self.par = px[:nump]
+			self.fitx = px[nump:]
 			if check:
 				assert par is None
 				assert fitx is None
@@ -187,13 +203,15 @@ class FitOutput:
 			
 		if not (pxcov is None):
 			self.pxcov = pxcov
-			if np is None:
-				np = -len(datax)
-			self.cov = pxcov[:np,:np]
+			if nump is None:
+				nump = -len(datax)
+			self.cov = pxcov[:nump,:nump]
 			if check:
 				assert cov is None
+		else:
+			self.cov = cov
 		
-		if not (self.px is None) and not (self.pxcov is None):
+		if hasattr(self, 'px') and hasattr(self, 'pxcov'):
 			self.upx = uncertainties.correlated_values(self.px, self.pxcov)
 		if not (self.par is None) and not (self.cov is None):
 			self.upar = uncertainties.correlated_values(self.par, self.cov)
@@ -244,10 +262,10 @@ class FitOutput:
 
 class FitModel:
 
-	def __init__(self, f, sym=True, dfdx=None, dfdp=None, dfdpdx=None, invf=None, implicit=False):
-		"""if sym=True, use sympy to obtain derivatives from f
+	def __init__(self, f, symb=False, dfdx=None, dfdp=None, dfdpdx=None):
+		"""if symb=True, use sympy to obtain derivatives from f
 		or f is a scipy.odr.Model or a FitModel to copy"""
-		if sym:
+		if symb:
 			args = inspect.getargspec(f).args
 			xsym = sympy.symbols('x', real=True)
 			psym = [sympy.symbols('p%s' % num2sub(i), real=True) for i in range(len(args) - 1)]
@@ -258,22 +276,20 @@ class FitModel:
 			self._f = sympy.lambdify(syms, f(*syms), "numpy")
 			self._f_sym = f
 			self._repr = 'FitModel(y = {})'.format(f(*syms))
-			self._sym = True
+			self._symb = True
 		else:
 			self._dfdx = dfdx
 			self._dfdp = dfdp
 			self._dfdpdx = dfdpdx
+			self._dfdps = None
+			self._dfdpdxs = None
 			self._f = f
 			self._repr = 'FitModel(y = {})'.format(f)
-			self._sym = False
+			self._symb = False
 	
 	def __repr__(self):
 		return self._repr
 		
-	# def implicit(self):
-	# 	"""return True if the model is implicit (no y)"""
-	# 	pass
-	#
 	def f(self):
 		"""return function"""
 		return self._f
@@ -291,35 +307,70 @@ class FitModel:
 
 	def dfdx_odrpack(self, length):
 		"""return dfdx function with return format of scipy.odr's jacd"""
-		rt = np.empty(length)
-		def f_p(B, x):
-			rt[:] = self._dfdx(x, *B)
-			return rt
-		return f_p
+		if self._dfdx is None:
+			return None
+		else:
+			rt = np.empty(length)
+			def f_p(B, x):
+				rt[:] = self._dfdx(x, *B)
+				return rt
+			return f_p
 
 	def dfdps(self):
 		"""return list of dfdp functions, one for each parameter"""
 		return self._dfdps
+	
+	def dfdp(self, length=None):
+		if self._symb:
+			rt = np.empty((length, len(self._dfdps)))
+			def f_p(*args):
+				for i in range(len(self._dfdps)):
+					rt[:,i] = self._dfdps[i](*args)
+				return rt
+			return f_p
+		else:
+			return self._dfdp
 
-	def dfdp_odrpack(self, length):
+	def dfdp_odrpack(self, length=None):
 		"""return dfdp function with return format of scipy.odr's jacb"""
-		rt = np.empty((len(self._dfdps), length))
-		def f_p(B, x):
-			for i in range(len(self._dfdps)):
-				rt[i] = self._dfdps[i](x, *B)
-			return rt
-		return f_p
+		if self._symb:
+			rt = np.empty((len(self._dfdps), length))
+			def f_p(B, x):
+				for i in range(len(self._dfdps)):
+					rt[i] = self._dfdps[i](x, *B)
+				return rt
+			return f_p
+		elif not (self._dfdp is None):
+			def f_p(B, x):
+				return self._dfdp(x, *B).T
+			return f_p
+		else:
+			return None
 
 	def dfdp_curve_fit(self, length):
-		rt = np.empty((len(self._dfdps), length))
-		def f_p(*args):
-			for i in range(len(self._dfdps)):
-				rt[i] = self._dfdps[i](*args)
-			return rt.T
-		return f_p
+		if self._symb:
+			rt = np.empty((len(self._dfdps), length))
+			def f_p(*args):
+				for i in range(len(self._dfdps)):
+					rt[i] = self._dfdps[i](*args)
+				return rt.T
+			return f_p
+		else:
+			return self._dfdp
 
 	def dfdpdxs(self):
 		return self._dfdpdxs
+	
+	def dfdpdx(self, length=None):
+		if self._symb:
+			rt = np.empty((length, len(self._dfdpdxs)))
+			def f_p(*args):
+				for i in range(len(self._dfdpdxs)):
+					rt[:,i] = self._dfdpdxs[i](*args)
+				return rt
+			return f_p
+		else:
+			return self._dfdpdx
 
 def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True, method='auto', full_output=True, check=True, print_info=0, **kw):
 	"""f may be either callable or FitModel"""
@@ -337,7 +388,7 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 			print('Model given: {}'.format(model))
 			print()
 	else:
-		model = FitModel(f)
+		model = FitModel(f, symb=False)
 		if print_info >= 1:
 			print('Model created from f: {}'.format(model))
 			print()
@@ -369,8 +420,11 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		
 		M = odr.Model(fcn, fjacb=fjacb, fjacd=fjacd)
 		data = odr.RealData(x, y, sx=dx, sy=dy)
-		ODR = odr.ODR(data, M, beta0=p0, **kw)
-		ODR.set_iprint(init=print_info >= 2, iter=print_info >= 3, final=print_info >= 2)
+		ODR = odr.ODR(data, M, beta0=np.atleast_1d(p0), **kw)
+		ip_init = max(0, min(print_info - 1, 2))
+		ip_final = ip_init
+		ip_iter = max(0, min(print_info - 2, 2))
+		ODR.set_iprint(init=ip_init, iter=ip_iter, final=ip_final, iter_step=10)
 		output = ODR.run()
 		par = output.beta
 		cov = output.cov_beta
@@ -388,11 +442,26 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 
 	elif method == 'linodr':
 		f = model.f()
-		dfdps = model.dfdps()
 		dfdx = model.dfdx()
+		dfdps = model.dfdps()
 		dfdpdxs = model.dfdpdxs()
+		dfdp = model.dfdp(len(x))
+		dfdpdx = model.dfdpdx(len(x))
 		
-		par, cov = _fit_generic_odr(f, dfdx, dfdps, dfdpdxs, x, y, dx, dy, p0, **kw)
+		if dfdx is None:
+			diff_step = kw.get('diff_step', np.finfo('float64').eps * 128)
+			def dfdx(x, *p):
+				h = x * diff_step + diff_step
+				return (f(x + h, *p) - f(x, *p)) / h
+		
+		if dx is None:
+			dx = 0
+		if dy is None:
+			dy = 0
+			
+		verbosity = max(0, min(print_info - 1, 2))
+		
+		par, cov, output = _fit_generic_odr(f, x, y, dx, dy, np.atleast_1d(p0), dfdx=dfdx, dfdps=dfdps, dfdpdxs=dfdpdxs, dfdp=dfdp, dfdpdx=dfdpdx, verbose=verbosity, **kw)
 		
 		if full_output or not absolute_sigma:
 			deriv = dfdx(x, *par)
@@ -404,18 +473,19 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 			fact = (y - f(x, *par)) / err2
 			delta_x = fact * deriv * dx**2
 			delta_y = -fact * dy**2
-			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y, datax=x, datay=y, method=method, check=check)
+			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y, datax=x, datay=y, method=method, rawoutput=output, check=check)
 		else:
 			out = FitOutput(par=par, cov=cov, check=check)
 	
 	elif method == 'ml':
 		f = model.f()
-		dfdps = model.dfdps()
 		dfdx = model.dfdx()
+		dfdps = model.dfdps()
+		dfdp = model.dfdp()
 		
-		verbosity = 0 if print_info <= 1 else 1 if print_info == 2 else 2
+		verbosity = max(0, min(print_info - 1, 2))
 		
-		px, pxcov, output = _fit_generic_ml(f, dfdx, dfdps, x, y, dx, dy, p0, verbose=verbosity, **kw)
+		px, pxcov, output = _fit_generic_ml(f, x, y, dx, dy, p0, dfdx=dfdx, dfdps=dfdps, dfdp=dfdp, verbose=verbosity, **kw)
 		
 		if full_output or not absolute_sigma:
 			par = px[:len(p0)]
@@ -424,19 +494,19 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		if not absolute_sigma:
 			cov *= chisq / (len(y) - len(par))
 		if full_output:
-			out = FitOutput(px=px, pxcov=pxcov, datax=x, datay=y, chisq=chisq, method=method, check=check)
+			out = FitOutput(px=px, pxcov=pxcov, datax=x, datay=y, chisq=chisq, method=method, rawoutput=output, check=check)
 		else:
 			out = FitOutput(par=par, cov=cov, check=check)
 	
 	elif method == 'ev':
-		# TODO jac
 		f = model.f()
 		dfdx = model.dfdx()
+		jac = model.dfdp_curve_fit()
 		conv_diff = kw.pop('conv_diff', 1e-7)
 		max_cycles = kw.pop('max_cycles', 5)
 		
-		par, cov = optimize.curve_fit(f, x, y, p0=p0, absolute_sigma=absolute_sigma, **kw)
-		par, cov, cycles = _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, **kw)
+		par, cov = optimize.curve_fit(f, x, y, p0=p0, absolute_sigma=absolute_sigma, jac=jac, **kw)
+		par, cov, cycles = _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, jac=jac, **kw)
 		
 		if cycles == -1:
 			raise RuntimeError('Maximum number (%d) of fit cycles reached' % max_cycles)
@@ -451,6 +521,7 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 			delta_x = fact * deriv * dx**2
 			delta_y = -fact * dy**2
 			out = FitOutput(par=par, cov=cov, datax=x, datay=y, chisq=chisq, method=method, check=check, delta_x=delta_x, delta_y=delta_y)
+			out.cycles = cycles
 		else:
 			out = FitOutput(par=par, cov=cov, check=check)
 
@@ -465,6 +536,7 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 			delta_y = y - f(x, *par)
 			chisq = np.sum((delta_y / dy) ** 2)
 			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y, datax=x, datay=y, method=method, check=check)
+			out.cycles = cycles
 		else:
 			out = FitOutput(par=par, cov=cov, check=check)
 	
@@ -477,7 +549,7 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		if full_output:
 			delta_x = np.zeros(len(x))
 			delta_y = y - f(x, *par)
-			chisq = np.sum((delta_y / dy) ** 2)
+			chisq = np.sum(delta_y ** 2)
 			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y, datax=x, datay=y, method=method, check=check)
 		else:
 			out = FitOutput(par=par, cov=cov, check=check)
@@ -1077,8 +1149,10 @@ def util_mm_er(x, scale, metertype='lab3', unit='volt', sqerr=False):
 	unit : string
 		one of 'volt', 'volt_ac', 'ampere' 'ampere_ac', 'ohm', 'farad'
 		the unit of measure of x
-	sqerr : bool
-		If True, sum errors squaring.
+	sqerr : bool or callable
+		If False, sum errors. If True, sum squares of errors. If callable,
+		two errors are summed calling sqerr(err1, err2). For digital multimeters,
+		the first argument passed to sqerr is the percentual error.
 
 	Returns
 	-------
@@ -1094,7 +1168,7 @@ def util_mm_er(x, scale, metertype='lab3', unit='volt', sqerr=False):
 
 	x = abs(x)
 
-	errsum = (lambda x, y: math.sqrt(x**2 + y**2)) if sqerr else (lambda x, y: x + y)
+	errsum = sqerr if hasattr(sqerr, '__call__') else (lambda x, y: math.sqrt(x**2 + y**2)) if sqerr else (lambda x, y: x + y)
 
 	meter = _util_mm_esr_data[metertype]
 	info = meter[unit]
@@ -1113,7 +1187,7 @@ def util_mm_er(x, scale, metertype='lab3', unit='volt', sqerr=False):
 		elif unit == 'ampere' or unit == 'ampere_ac':
 			r = info['cdt'] / s
 	elif typ == 'analog':
-		e = s * errsum(0.5 / info['relres'][idx], info['valg'][idx] / 100.0)
+		e = s * errsum(info['valg'][idx] / 100.0, 0.5 / info['relres'][idx])
 		if unit == 'volt' or unit == 'volt_ac':
 			r = 20000 * s
 		elif unit == 'ampere' or unit == 'ampere_ac':
@@ -1128,7 +1202,7 @@ def util_mm_er(x, scale, metertype='lab3', unit='volt', sqerr=False):
 
 def util_mm_esr(x, metertype='lab3', unit='volt', sqerr=False):
 	"""
-	determines the fullscale used to measure x with a multimeter,
+	Determines the fullscale used to measure x with a multimeter,
 	supposing the lowest possible fullscale was used, and returns the
 	uncertainty, the fullscale and the internal resistance.
 
@@ -1723,14 +1797,14 @@ def fit_generic_xyerr(f, dfdx, x, y, sigmax, sigmay, p0=None, print_info=False, 
 	"""
 	THIS FUNCTION IS DEPRECATED
 	"""
-	model = FitModel(f, dfdx=dfdx, sym=False)
+	model = FitModel(f, dfdx=dfdx, symb=False)
 	return fit_generic(model, x, y, dx=sigmax, dy=sigmay, p0=p0, absolute_sigma=absolute_sigma, print_info=print_info, method='ev', conv_diff=conv_diff, max_cycles=max_cycles, **kw)
 
 def fit_generic_xyerr2(f, x, y, sigmax, sigmay, p0=None, print_info=False, absolute_sigma=True):
 	"""
 	THIS FUNCTION IS DEPRECATED
 	"""
-	model = FitModel(f, sym=False)
+	model = FitModel(f, symb=False)
 	return fit_generic(model, x, y, dx=sigmax, dy=sigmay, p0=p0, absolute_sigma=absolute_sigma, print_info=print_info, method='odrpack')
 
 curve_fit_patched = optimize.curve_fit
