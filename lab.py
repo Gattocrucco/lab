@@ -14,17 +14,19 @@ import uncertainties
 
 # TODO
 # rinominare *fit_generic* *fit_curve* e FitModel CurveModel
+# anziché fit implicito, si può fare un fit parametrico?
 #
 # fit_plot (nuova funzione)
+# o magari metodo di FitOutput
 # plotta una densità di curve di best fit
 # fit_plot(x, f or FitModel, par, cov or FitOutput, n=100, axes=gca(), **kw)
 # **kw passed to axes.plot, but label is intercepted and added to one.
 #
+# fit_bootstrap
+# impacchettare fittest.py
+#
 # FitModel
 # verificare se il modello simbolico è del tipo p_i*h_i(x) (hessiana nulla)
-#
-# _fit_generic_ml
-# supportare dx == 0 non ovunque
 #
 # util_format
 # opzione si=True per formattare come num2si
@@ -34,10 +36,15 @@ import uncertainties
 # pfix = [True, False ...] i True vengono bloccati
 # pfix = [0, 3, 5...] i parametri a questi indici vengono bloccati
 # bounds
-# odrpack: if dx is none, use ODR.set_job(fit_type=2)
+# supportare dx == 0 xor dy == 0
+#   odrpack: ifixx per le dx nulle, se tutte nulle fit_type=2.
+#            per le dy nulle non so.
+#   linodr: già supportato.
+#   ev: dx ok, dy bisogna sistemarle nel fit iniziale (metterne di più piccole delle altre?)
+#   leastsq, wleastsq: dx ignorato, dy nulle non supportate e basta.
 #
 # fit_oversampling
-# sostituire Counter con unique
+# non funziona con tutti i campioni uguali o quasi, bisogna usare metodi bayesiani
 #
 
 __all__ = [ # things imported when you do "from lab import *"
@@ -347,7 +354,7 @@ class FitModel:
 		else:
 			return None
 
-	def dfdp_curve_fit(self, length):
+	def dfdp_curve_fit(self, length=None):
 		if self._symb:
 			rt = np.empty((len(self._dfdps), length))
 			def f_p(*args):
@@ -396,12 +403,8 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 	# METHOD
 	
 	if method == 'auto':
-		dxn = dx is None
-		dyn = dy is None
-		if dxn and dyn:
-			method = 'leastsq'
-		elif dxn:
-			method = 'wleastsq'
+		if (dy is None) and not (dx is None):
+			method = 'linodr'
 		else:
 			method = 'odrpack'
 		if print_info >= 1:
@@ -411,8 +414,8 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		print('Method: "%s"' % method)
 		print()
 	
-	# FIT
-
+	##### ODRPACK #####
+	
 	if method == 'odrpack':
 		fcn = model.f_odrpack(len(x))
 		fjacb = model.dfdp_odrpack(len(x))
@@ -421,6 +424,8 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		M = odr.Model(fcn, fjacb=fjacb, fjacd=fjacd)
 		data = odr.RealData(x, y, sx=dx, sy=dy)
 		ODR = odr.ODR(data, M, beta0=np.atleast_1d(p0), **kw)
+		if dx is None:
+			ODR.set_job(fit_type=2)
 		ip_init = max(0, min(print_info - 1, 2))
 		ip_final = ip_init
 		ip_iter = max(0, min(print_info - 2, 2))
@@ -430,15 +435,22 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		cov = output.cov_beta
 		
 		if full_output or not absolute_sigma:
-			chisq = np.sum(((output.eps / dy)**2 + (output.delta / dx)**2))
+			if not (dx is None) and not (dy is None):
+				chisq = np.sum((output.eps / dy)**2 + (output.delta / dx)**2)
+			elif dx is None and not (dy is None):
+				chisq = np.sum((output.eps / dy)**2)
+			elif dx is None and dy is None:
+				chisq = np.sum(output.eps ** 2)
 		if not absolute_sigma:
 			cov *= chisq / (len(x) - len(par))
 		if full_output:
-			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=output.delta, delta_y=output.eps, datax=x, datay=y, rawoutput=output, method=method, check=check)
+			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=output.delta, delta_y=output.eps, datax=x, datay=y, fitx=output.xplus, fity=output.y, rawoutput=output, method=method, check=check)
 		else:
 			out = FitOutput(par=par, cov=cov, check=check)
 		if print_info == 1:
 			output.pprint()
+
+	##### LINEARIZED ODR #####
 
 	elif method == 'linodr':
 		f = model.f()
@@ -476,6 +488,12 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y, datax=x, datay=y, method=method, rawoutput=output, check=check)
 		else:
 			out = FitOutput(par=par, cov=cov, check=check)
+		
+		if print_info >= 1:
+			print('Result:')
+			print(format_par_cov(par, cov))
+	
+	##### FULL-FEATURE MAXIMUM LIKELIHOOD #####
 	
 	elif method == 'ml':
 		f = model.f()
@@ -492,11 +510,17 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 			xstar = px[-len(x):]
 			chisq = np.sum(((y - f(x, *par)) / dy)**2) + np.sum(((xstar - x) / dx) ** 2)
 		if not absolute_sigma:
-			cov *= chisq / (len(y) - len(par))
+			pxcov *= chisq / (len(y) - len(par))
 		if full_output:
 			out = FitOutput(px=px, pxcov=pxcov, datax=x, datay=y, chisq=chisq, method=method, rawoutput=output, check=check)
 		else:
-			out = FitOutput(par=par, cov=cov, check=check)
+			out = FitOutput(px=px, pxcov=pxcov, check=check)
+		
+		if print_info >= 1:
+			print('Result:')
+			print(format_par_cov(px[:len(p0)], pxcov[:len(p0),:len(p0)]))
+	
+	##### EFFECTIVE VARIANCE #####
 	
 	elif method == 'ev':
 		f = model.f()
@@ -505,6 +529,12 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		conv_diff = kw.pop('conv_diff', 1e-7)
 		max_cycles = kw.pop('max_cycles', 5)
 		
+		if dfdx is None:
+			diff_step = kw.get('diff_step', np.finfo('float64').eps * 128)
+			def dfdx(x, *p):
+				h = x * diff_step + diff_step
+				return (f(x + h, *p) - f(x, *p)) / h
+		
 		par, cov = optimize.curve_fit(f, x, y, p0=p0, absolute_sigma=absolute_sigma, jac=jac, **kw)
 		par, cov, cycles = _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, jac=jac, **kw)
 		
@@ -512,8 +542,6 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 			raise RuntimeError('Maximum number (%d) of fit cycles reached' % max_cycles)
 	
 		if full_output:
-			# compute delta_xy as in linodr.
-			# doubt: should we compute it only along y?
 			deriv = dfdx(x, *par)
 			err2 = dy ** 2   +   deriv ** 2  *  dx ** 2
 			chisq = np.sum((y - f(x, *par))**2 / err2)
@@ -524,7 +552,14 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 			out.cycles = cycles
 		else:
 			out = FitOutput(par=par, cov=cov, check=check)
-
+	
+		if print_info >= 1:
+			print('Cycles: %d' % cycles)
+			print('Result:')
+			print(format_par_cov(par, cov))
+	
+	##### WEIGHTED LEAST SQUARES #####
+	
 	elif method == 'wleastsq':
 		f = model.f()
 		jac = model.dfdp_curve_fit(len(x))
@@ -540,6 +575,12 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		else:
 			out = FitOutput(par=par, cov=cov, check=check)
 	
+		if print_info >= 1:
+			print('Result:')
+			print(format_par_cov(par, cov))
+	
+	##### LEAST SQUARES #####
+	
 	elif method == 'leastsq':
 		f = model.f()
 		jac = model.dfdp_curve_fit(len(x))
@@ -554,12 +595,17 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		else:
 			out = FitOutput(par=par, cov=cov, check=check)
 
+		if print_info >= 1:
+			print('Result:')
+			print(format_par_cov(par, cov))
+	
 	else:
 		raise KeyError(method)
 	
 	# RETURN
 
 	if print_info >= 1:
+		print()
 		print('############## END fit_generic ##############')
 	
 	return out
@@ -832,7 +878,7 @@ def fit_const_yerr(y, sigmay):
 	vara = 1 / s1
 	return a, vara
 
-def fit_oversampling(data, digit=1, print_info=False, plot_axes=None):
+def fit_oversampling(data, digit=1, print_info=0, plot_axes=None):
 	"""
 	Given discretized samples, find the maximum likelihood estimate
 	of the average and standard deviation of a normal distribution.
@@ -846,8 +892,8 @@ def fit_oversampling(data, digit=1, print_info=False, plot_axes=None):
 	digit : number
 		The unit of discretization. Data is divided by digit before
 		computing, then results are multiplied by digit.
-	print_info : boolean
-		If True, print verbose information about the fit.
+	print_info : integer
+		
 	plot_axes : Axes3DSubplot or None
 		If a 3D subplot is given, plot the likelihood around the estimate.
 	
@@ -858,9 +904,7 @@ def fit_oversampling(data, digit=1, print_info=False, plot_axes=None):
 	cov : 2D array
 		Covariance matrix of the estimate.
 	"""
-	# TODO
-	# usare monte carlo per fare un fit bayesiano, se no qui non ci si salva
-	if print_info:
+	if print_info >= 1:
 		print('########################## FIT_OVERSAMPLING ##########################')
 		print()
 	
@@ -873,19 +917,20 @@ def fit_oversampling(data, digit=1, print_info=False, plot_axes=None):
 	
 	data -= p0[0]
 	data /= p0[1]
-	hdigit = digit / p0[1] / 2
+	hdigit = 1 / p0[1] / 2
 	
-	c = Counter(data)
-	points = np.array(list(c.keys()), dtype='float64')
-	counts = np.array(list(c.values()), dtype='uint32')
+	points, counts = np.unique(data, return_counts=True)
 	
-	if print_info:
+	if print_info >= 1:
 		print('Number of data points: %d' % n)
 		print('Number of unique points: %d' % len(points))
 		print('Discretization unit: %.3g' % digit)
-		print('Sample mean: %.3g' % p0[0])
-		print('Sample standard deviation: %.3g' % (p0[1] if len(counts) > 1 else 0))
+		print('Sample mean: %.3g' % (p0[0] * digit))
+		print('Sample standard deviation: %.3g' % (p0[1] * digit if len(counts) > 1 else 0))
 		print()
+	
+	if print_info == 1:
+		print('Minimizing...')
 	
 	lp = np.empty(len(points))
 	
@@ -907,30 +952,28 @@ def fit_oversampling(data, digit=1, print_info=False, plot_axes=None):
 				
 		return -np.sum(counts * lp)# + np.log(sigma) # jeffreys' prior
 		
-	result = optimize.minimize(minusloglikelihood, (0, 1), method='L-BFGS-B', options=dict(disp=print_info), bounds=((-hdigit, hdigit), (0.1, None)))
+	result = optimize.minimize(minusloglikelihood, (0, 1), method='L-BFGS-B', options=dict(disp=print_info >= 2), bounds=((-hdigit, hdigit), (0.1, None)))
 	
-	if print_info:
+	if print_info >= 2:
 		print('###### MINIMIZATION FINISHED ######')
 		print()
 	
 	par = result.x
-	cov = numdiff.Hessian(minusloglikelihood, method='forward')(par)
+	hess = numdiff.Hessian(minusloglikelihood, method='forward')(par)
 	try:
-		cov = linalg.inv(cov)
+		cov = linalg.inv(hess)
 	except linalg.LinAlgError:
-		if print_info:
+		if print_info >= 1:
 			print('Hessian is not invertible, computing pseudo-inverse')
 			print()
-		jac = numdiff.Jacobian(minusloglikelihood, method='forward')(par)
-		_, s, VT = linalg.svd(jac, full_matrices=False)
-		threshold = np.finfo(float).eps * max(jac.shape) * s[0]
-		s = s[s > threshold]
-		VT = VT[:s.size]
-		cov = np.dot(VT.T / s**2, VT)
+		W, V = linalg.eigh(hess)
+		cov = np.zeros(hess.shape)
+		np.fill_diagonal(cov, [(1 / w if w != 0 else 0) for w in W])
+		cov = V.dot(cov).dot(V.T)
 	
 	if not (plot_axes is None):
-		if print_info:
-			print('Plotting likelihood')
+		if print_info >= 1:
+			print('Plotting likelihood...')
 			print()
 		plot_axes.cla()
 		factor = special.gammaln(1 + n) - np.sum(special.gammaln(1 + counts))
@@ -955,10 +998,11 @@ def fit_oversampling(data, digit=1, print_info=False, plot_axes=None):
 	cov *= p0[1] ** 2
 	cov *= digit ** 2
 	
-	if print_info:
+	if print_info >= 2:
 		print('###### SUMMARY ######')
-		print('Sample mean: %.3g' % p0[0])
-		print('Sample standard deviation: %.3g' % (p0[1] if len(counts) > 1 else 0))
+		print('Sample mean: %.3g' % (p0[0] * digit))
+		print('Sample standard deviation: %.3g' % (p0[1] * digit if len(counts) > 1 else 0))
+	if print_info >= 1:
 		print('Estimated mean, standard deviation (with correlation):')
 		print(format_par_cov(par, cov))
 		
