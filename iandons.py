@@ -141,6 +141,7 @@ def maketab(*columns, errors='all', precision=3):
 
 
 def giverrs(typ):
+	"""Interactive mme() interface."""
 	while 1:
 		a = input()
 		if a == '\n':
@@ -218,7 +219,14 @@ class DataHolder(object):
 
 	def __init__(self, x, y, dx=0, dy=0, name=None):
 		self.num = next(self._holdercount)
-		self.datakw = dict(fmt='none', ecolor='black', label='data')
+		self.datakw = dict(
+			fmt='none',
+			ecolor='black',
+			elinewidth=0.8,
+			capthick=0.8,
+			label='data'
+		)
+		self.subpars = dict(hspace=0.3)
 		self.pts = None
 		self.title = ""
 		if name:
@@ -304,7 +312,7 @@ class DataHolder(object):
 		if self.x.lims is None:
 			self._set_edges('x')
 		if self.y.lims is None:
-			self._set_edges('y')
+			self._set_edges('y')git
 		if self.pts is None:
 			self._getpts()
 		if not resid:
@@ -317,6 +325,7 @@ class DataHolder(object):
 			resd_ax = self.fig.add_subplot(sub_gs[4:])
 			resd_ax.axhline(y=0, color='black')
 			resd_ax.set_xlabel(self.x.label)
+			resd_ax.set_ylabel('Norm. res.')
 			resd_ax.set_xscale(self.x.type)
 			resd_ax.set_xlim(*(self.x.lims * self.x.re))
 			self.resd_ax = resd_ax
@@ -331,6 +340,7 @@ class DataHolder(object):
 
 	def draw(self, *funcs, resid=False, data=True, legend=True):
 		self.fig = plt.figure(self.num)
+		self.fig.subplots_adjust(**self.subpars)
 		self.fig.clf()
 		self._graph_setup(resid)
 		main_ax = self.main_ax
@@ -369,7 +379,7 @@ class DataHolder(object):
 
 		for fun in resid:
 			mask = getattr(fun, 'mask', np.ones(len(x), dtype=bool))
-			resdkw = dict(marker='o')
+			resdkw = dict(marker='o', markeredgecolor='k', markeredgewidth=.5)
 			if hasattr(fun, 'linekw'):
 				resdkw.update(fun.linekw)
 			resdkw.update(ls='none')
