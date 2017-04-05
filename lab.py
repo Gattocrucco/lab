@@ -8,13 +8,11 @@ import time
 from scipy import odr, optimize, stats, special, linalg
 import os
 import sympy
-from collections import Counter
 import numdifftools as numdiff
 import uncertainties
 
 # TODO
 # rinominare *fit_generic* *fit_curve* e FitModel CurveModel
-# anziché fit implicito, si può fare un fit parametrico?
 #
 # fit_plot (nuova funzione)
 # o magari metodo di FitOutput
@@ -40,16 +38,21 @@ import uncertainties
 #   odrpack: ifixx per le dx nulle, se tutte nulle fit_type=2.
 #            per le dy nulle non so.
 #   linodr: già supportato.
-#   ev: dx ok, dy bisogna sistemarle nel fit iniziale (metterne di più piccole delle altre?)
+#   ev: dx ok, dy bisogna sistemarle nel fit iniziale (metterne di più piccole delle altre? ignorarle?)
 #   leastsq, wleastsq: dx ignorato, dy nulle non supportate e basta.
+# linodr diventa molto instabile se non gli si da le derivate, è un bug della mia derivata discreta dfdx?
 #
 # fit_oversampling
 # non funziona con tutti i campioni uguali o quasi, bisogna usare metodi bayesiani
+#
+# sembra esserci un problema con il print di ODRPACK, nel report finale sbaglia a scrivere gli errori, fare un bug report.
+# altro problema di ODRPACK: out.y != y + out.eps, è una cosa tutta calcolata dentro DODRC quindi non è un problema del wrapper. Si tratta comunque di differenze ragionevoli, può darsi che sia volutamente un'approssimazione sufficiente per non valutare una volta in più la funzione.
 #
 
 __all__ = [ # things imported when you do "from lab import *"
 	'fit_norm_cov',
 	'fit_generic',
+	'FitModel',
 	'fit_linear',
 	'fit_const_yerr',
 	'fit_oversampling',
@@ -63,7 +66,8 @@ __all__ = [ # things imported when you do "from lab import *"
 	'xe',
 	'xep',
 	'util_format',
-	'Eta'
+	'Eta',
+	'nextfilename'
 ]
 
 # __all__ += [ # things for backward compatibility
@@ -223,11 +227,6 @@ class FitOutput:
 		if not (self.par is None) and not (self.cov is None):
 			self.upar = uncertainties.correlated_values(self.par, self.cov)
 		
-		self.chisq = chisq
-		if not (chisq is None):
-			self.chisq_dof = len(delta_x) - len(par)
-			self.chisq_pvalue = stats.chi2.sf(self.chisq, self.chisq_dof)
-		
 		if delta_x is None and not (datax is None) and not (self.fitx is None):
 			self.delta_x = self.fitx - datax
 			self.datax = datax
@@ -262,6 +261,11 @@ class FitOutput:
 			self.fity = fity
 		if check and np.sum([a is None for a in [self.fity, self.datay, self.delta_y]]) == 0:
 			assert np.allclose(self.fity, self.datay + self.delta_y)
+		
+		self.chisq = chisq
+		if not (chisq is None):
+			self.chisq_dof = len(self.delta_x) - len(self.par)
+			self.chisq_pvalue = stats.chi2.sf(self.chisq, self.chisq_dof)
 		
 		self.rawoutput = rawoutput
 		
@@ -444,7 +448,8 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		if not absolute_sigma:
 			cov *= chisq / (len(x) - len(par))
 		if full_output:
-			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=output.delta, delta_y=output.eps, datax=x, datay=y, fitx=output.xplus, fity=output.y, rawoutput=output, method=method, check=check)
+			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=output.delta, delta_y=output.eps, datax=x, datay=y, fitx=output.xplus, fity=output.y, rawoutput=output, method=method, check=False)
+			# (!) check=False because ODRPACK may return slightly inconsistent fity, delta_y; the problem is in ODRPACK itself, not in the wrapper. Anyway, inconsistencies are reasonable, so we just look away.
 		else:
 			out = FitOutput(par=par, cov=cov, check=check)
 		if print_info == 1:
@@ -461,7 +466,7 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		dfdpdx = model.dfdpdx(len(x))
 		
 		if dfdx is None:
-			diff_step = kw.get('diff_step', np.finfo('float64').eps * 128)
+			diff_step = kw.get('diff_step', np.finfo('float64').eps * 1024)
 			def dfdx(x, *p):
 				h = x * diff_step + diff_step
 				return (f(x + h, *p) - f(x, *p)) / h
@@ -499,7 +504,7 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		f = model.f()
 		dfdx = model.dfdx()
 		dfdps = model.dfdps()
-		dfdp = model.dfdp()
+		dfdp = model.dfdp(len(x))
 		
 		verbosity = max(0, min(print_info - 1, 2))
 		
@@ -508,7 +513,7 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		if full_output or not absolute_sigma:
 			par = px[:len(p0)]
 			xstar = px[-len(x):]
-			chisq = np.sum(((y - f(x, *par)) / dy)**2) + np.sum(((xstar - x) / dx) ** 2)
+			chisq = np.sum(((y - f(xstar, *par)) / dy)**2) + np.sum(((xstar - x) / dx) ** 2)
 		if not absolute_sigma:
 			pxcov *= chisq / (len(y) - len(par))
 		if full_output:
@@ -525,12 +530,12 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 	elif method == 'ev':
 		f = model.f()
 		dfdx = model.dfdx()
-		jac = model.dfdp_curve_fit()
+		jac = model.dfdp_curve_fit(len(x))
 		conv_diff = kw.pop('conv_diff', 1e-7)
 		max_cycles = kw.pop('max_cycles', 5)
 		
 		if dfdx is None:
-			diff_step = kw.get('diff_step', np.finfo('float64').eps * 128)
+			diff_step = kw.get('diff_step', np.finfo('float64').eps * 1024)
 			def dfdx(x, *p):
 				h = x * diff_step + diff_step
 				return (f(x + h, *p) - f(x, *p)) / h
@@ -571,7 +576,6 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 			delta_y = y - f(x, *par)
 			chisq = np.sum((delta_y / dy) ** 2)
 			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y, datax=x, datay=y, method=method, check=check)
-			out.cycles = cycles
 		else:
 			out = FitOutput(par=par, cov=cov, check=check)
 	
