@@ -11,8 +11,8 @@ p0s = [ # true parameters, axis 0 = parameter, axis 1 = values
 	# linspace(-1,1,10),
 	# logspace(0,1,10),
 	[1],
-	[0],
-#	[1],
+	[1],
+	# [1],
 ]
 fs = [ # sympy functions
 	lambda x, a, b: a * sympy.exp(x / b),
@@ -24,7 +24,7 @@ f = fs[1] # function to fit
 
 mcn = 1000 # number of repetitions (monte carlo)
 method = 'odrpack' # ev, linodr, odrpack, ml, wleastsq, leastsq
-xmean = np.linspace(0, 10, 100) # true x
+xmean = np.linspace(0, 10, 10) # true x
 n = len(xmean) # number of points
 dys = np.outer([1], np.ones(n)*.1) # errors, axis 0 = dataset, axis 1 = point
 dxs = np.outer([1], np.ones(n)*.1)

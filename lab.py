@@ -637,7 +637,7 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 	else:
 		model = CurveModel(f, symb=False)
 	f = model.f()
-	fstr = model.__repr__()
+	fstr = str(model)
 	flatex = model.latex()
 
 	# initialize output arrays
@@ -705,13 +705,16 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 			
 				# save results
 				icovs = np.empty(covs.shape)
+				I = np.eye(len(p0))
 				for i in range(len(icovs)):
-					icovs[i] = linalg.inv(covs[i])
-				pc = linalg.inv(icovs.sum(axis=0))
+					icovs[i] = linalg.solve(covs[i], I, assume_a='pos')
+				pc = linalg.solve(icovs.sum(axis=0), I, assume_a='pos')
 				wpar = np.empty(pars.shape)
 				for i in range(len(wpar)):
 					wpar[i] = icovs[i].dot(pars[i])
 				pm = pc.dot(wpar.sum(axis=0))
+				pm = pm[:len(p0)]
+				pc = pc[:len(p0), :len(p0)]
 				ps = np.sqrt(np.diag(pc))
 
 				fp[(l, ll) + K] = pm
@@ -798,7 +801,7 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 					fx = np.linspace(min(xmean), max(xmean), 1000)
 					ax.plot(fx, f(fx, *p0), '-', color='lightgray', linewidth=5, label='$y=%s$' % flatex, zorder=1)
 					ax.errorbar(x, y, dy, dx, fmt=',k', capsize=0, label='Data', zorder=2)
-					ax.plot(fx, f(fx, *pars[-1]), 'r-', linewidth=1, label='Fit', zorder=3, alpha=1)
+					ax.plot(fx, f(fx, *pars[-1,:len(p0)]), 'r-', linewidth=1, label='Fit', zorder=3, alpha=1)
 					# plot_text('$y=%s$\n$y=%s$' % (flatex, sympy.latex(fsym(xsym, *p0))), fontsize=20, ax=ax)
 					ax.ticklabel_format(style='sci', axis='both', scilimits=(-3,3))
 					ax.legend(loc=0, fontsize='small')
@@ -836,7 +839,7 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 	if plot.get('vsds', False):
 		from matplotlib import pyplot as plt
 	
-		fig = plt.figure(figsize=(10,7))
+		fig = plt.figure(figsize=(8, 3 * len(p0s)))
 		fig.clf()
 		fig.set_tight_layout(True)
 		fig.canvas.set_window_title('%s, method “%s”, parameters vs. errors' % (fstr, method))
