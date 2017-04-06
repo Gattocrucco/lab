@@ -495,87 +495,88 @@ def fit_bayes(f, x, y, dx, dy, par0, cov0, relax='x', std_dig=1.5, cor_err=0.01,
 	
 	return mpar, mcov, dpar, dcov
 
-f_sym = lambda x, a, b: a * x + sympy.sin(b*x)
-p0 = (-4, -10)
-x0 = np.linspace(0, 1, 5)
-dy = np.array([.05] * len(x0)) * 1
-dx = np.array([.05] * len(x0)) * 0.4
+if __name__ == '__main__':
+	f_sym = lambda x, a, b: a * x + sympy.sin(b*x)
+	p0 = (-4, -10)
+	x0 = np.linspace(0, 1, 5)
+	dy = np.array([.05] * len(x0)) * 1
+	dx = np.array([.05] * len(x0)) * 0.4
 
-model = lab.FitModel(f_sym)
-f = model.f()
+	model = lab.FitModel(f_sym)
+	f = model.f()
 
-y = f(x0, *p0) + np.random.randn(len(x0)) * dy
-x = x0 + np.random.randn(len(x0)) * dx
+	y = f(x0, *p0) + np.random.randn(len(x0)) * dy
+	x = x0 + np.random.randn(len(x0)) * dx
 
-nitn = 400*(len(x)+len(p0))
+	nitn = 400*(len(x)+len(p0))
 
-# ODR
+	# ODR
 
-par0, cov0, out = lab.fit_generic(model, x, y, dx=dx, dy=dy, p0=p0, full_output=True, method='odrpack', print_info=1, maxit=nitn)
+	par0, cov0, out = lab.fit_generic(model, x, y, dx=dx, dy=dy, p0=p0, full_output=True, method='odrpack', print_info=1, maxit=nitn)
 
-# MAXIMUM LIKELIHOOD
+	# MAXIMUM LIKELIHOOD
 
-PAR, COV = _fit_generic_ml(f, x, y, dx, dy, p0, max_nfev=nitn)
-par1 = PAR[:len(p0)]
-cov1 = COV[:len(p0),:len(p0)]
-X = PAR[len(p0):]
+	PAR, COV = _fit_generic_ml(f, x, y, dx, dy, p0, max_nfev=nitn)
+	par1 = PAR[:len(p0)]
+	cov1 = COV[:len(p0),:len(p0)]
+	X = PAR[len(p0):]
 
-PAR0 = np.concatenate((par0, x + out.delta_x))
-COV0 = np.zeros(COV.shape)
-COV0[:len(p0),:len(p0)] = cov0
-np.fill_diagonal(COV0[len(p0):,len(p0):], dx ** 2)
+	PAR0 = np.concatenate((par0, x + out.delta_x))
+	COV0 = np.zeros(COV.shape)
+	COV0[:len(p0),:len(p0)] = cov0
+	np.fill_diagonal(COV0[len(p0):,len(p0):], dx ** 2)
 
-# BAYESIAN AVERAGE
+	# BAYESIAN AVERAGE
 
-kwargs = dict(std_dig=1.5, prob_err=0.05, relax=['x', 'corr'])
+	kwargs = dict(std_dig=1.5, prob_err=0.05, relax=['x', 'corr'])
 
-fig = pyplot.figure('fitbayes_ml')
-PARB, COVB, DPARB, DCOVB = fit_bayes(f, x, y, dx, dy, PAR, COV, print_info=True, plot_figure=fig, **kwargs)
-parB = PARB[:len(p0)]
-XB = PARB[len(p0):]
+	fig = pyplot.figure('fitbayes_ml')
+	PARB, COVB, DPARB, DCOVB = fit_bayes(f, x, y, dx, dy, PAR, COV, print_info=True, plot_figure=fig, **kwargs)
+	parB = PARB[:len(p0)]
+	XB = PARB[len(p0):]
 
-# RESULTS
+	# RESULTS
 
-print(lab.format_par_cov(PAR0, COV0))
-print(lab.format_par_cov(PAR, COV))
-# print(lab.format_par_cov(PARA, COVA))
-print(lab.format_par_cov(PARB, COVB))
-print(p0)
+	print(lab.format_par_cov(PAR0, COV0))
+	print(lab.format_par_cov(PAR, COV))
+	# print(lab.format_par_cov(PARA, COVA))
+	print(lab.format_par_cov(PARB, COVB))
+	print(p0)
 
-# PLOT OF FITS
+	# PLOT OF FITS
 
-fx = np.linspace(min(x), max(x), 512)
-fig = pyplot.figure('fitbayes_plot')
-fig.clf()
-fig.set_tight_layout(True)
-axes = fig.add_subplot(111)
+	fx = np.linspace(min(x), max(x), 512)
+	fig = pyplot.figure('fitbayes_plot')
+	fig.clf()
+	fig.set_tight_layout(True)
+	axes = fig.add_subplot(111)
 
-# PARENT DISTRIBUTION
-axes.plot(fx, f(fx, *p0), '-', color=[.7]*3, linewidth=4, label='parent', zorder=-1)
-axes.plot(x0, f(x0, *p0), '.', color=[.7]*3, markersize=16, zorder=-1)
-for i in range(len(x0)):
-	axes.plot([x0[i], x[i]], [f(x0[i], *p0), y[i]], '--', color=[.7]*3, zorder=-1, linewidth=4)
+	# PARENT DISTRIBUTION
+	axes.plot(fx, f(fx, *p0), '-', color=[.7]*3, linewidth=4, label='parent', zorder=-1)
+	axes.plot(x0, f(x0, *p0), '.', color=[.7]*3, markersize=16, zorder=-1)
+	for i in range(len(x0)):
+		axes.plot([x0[i], x[i]], [f(x0[i], *p0), y[i]], '--', color=[.7]*3, zorder=-1, linewidth=4)
 
-# SIMULATED DATA
-axes.errorbar(x, y, xerr=dx, yerr=dy, fmt=',k', zorder=0, label='data')
+	# SIMULATED DATA
+	axes.errorbar(x, y, xerr=dx, yerr=dy, fmt=',k', zorder=0, label='data')
 
-# ODR 
-axes.plot(fx, f(fx, *par0), '-r', zorder=1, label='odr', linewidth=2)
-axes.plot(x + out.delta_x, y + out.delta_y, '.r', zorder=1, markersize=8)
-for i in range(len(x)):
-	axes.plot([x[i], (x + out.delta_x)[i]], [y[i], (y + out.delta_y)[i]], '--r', zorder=1, linewidth=2)
+	# ODR 
+	axes.plot(fx, f(fx, *par0), '-r', zorder=1, label='odr', linewidth=2)
+	axes.plot(x + out.delta_x, y + out.delta_y, '.r', zorder=1, markersize=8)
+	for i in range(len(x)):
+		axes.plot([x[i], (x + out.delta_x)[i]], [y[i], (y + out.delta_y)[i]], '--r', zorder=1, linewidth=2)
 
-# LIKELIHOOD
-axes.plot(fx, f(fx, *par1), '-b', zorder=2, label='ml', linewidth=1)
-axes.plot(X, f(X, *par1), '.b', zorder=2, markersize=4)
-for i in range(len(X)):
-	axes.plot([x[i], X[i]], [y[i], f(X[i], *par1)], '--b', zorder=2, linewidth=1)
+	# LIKELIHOOD
+	axes.plot(fx, f(fx, *par1), '-b', zorder=2, label='ml', linewidth=1)
+	axes.plot(X, f(X, *par1), '.b', zorder=2, markersize=4)
+	for i in range(len(X)):
+		axes.plot([x[i], X[i]], [y[i], f(X[i], *par1)], '--b', zorder=2, linewidth=1)
 
-# BAYESIAN
-axes.plot(fx, f(fx, *parB), '-y', zorder=4, label='bayes_ml', linewidth=1)
-axes.plot(XB, f(XB, *parB), '.y', zorder=4, markersize=4)
-for i in range(len(XB)):
-	axes.plot([x[i], XB[i]], [y[i], f(XB[i], *parB)], '--y', zorder=4, linewidth=1)
+	# BAYESIAN
+	axes.plot(fx, f(fx, *parB), '-y', zorder=4, label='bayes_ml', linewidth=1)
+	axes.plot(XB, f(XB, *parB), '.y', zorder=4, markersize=4)
+	for i in range(len(XB)):
+		axes.plot([x[i], XB[i]], [y[i], f(XB[i], *parB)], '--y', zorder=4, linewidth=1)
 
-axes.legend(loc=0)
-pyplot.show()
+	axes.legend(loc=0)
+	pyplot.show()

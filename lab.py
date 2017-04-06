@@ -12,25 +12,21 @@ import numdifftools as numdiff
 import uncertainties
 
 # TODO
-# rinominare *fit_generic* *fit_curve* e FitModel CurveModel
 #
 # fit_plot (nuova funzione)
-# o magari metodo di FitOutput
+# o magari metodo di FitCurveOutput
 # plotta una densità di curve di best fit
-# fit_plot(x, f or FitModel, par, cov or FitOutput, n=100, axes=gca(), **kw)
+# fit_plot(x, f or CurveModel, par, cov or FitCurveOutput, n=100, axes=gca(), **kw)
 # **kw passed to axes.plot, but label is intercepted and added to one.
 #
-# fit_bootstrap
-# impacchettare fittest.py
-#
-# FitModel
+# CurveModel
 # verificare se il modello simbolico è del tipo p_i*h_i(x) (hessiana nulla)
 #
 # util_format
 # opzione si=True per formattare come num2si
 # opzione errdig=(float)|'pdg' per scegliere le cifre dell'errore o usare il formato del PDG
 #
-# fit_generic
+# fit_curve
 # pfix = [True, False ...] i True vengono bloccati
 # pfix = [0, 3, 5...] i parametri a questi indici vengono bloccati
 # bounds
@@ -51,8 +47,10 @@ import uncertainties
 
 __all__ = [ # things imported when you do "from lab import *"
 	'fit_norm_cov',
-	'fit_generic',
-	'FitModel',
+	'fit_curve',
+	'fit_curve_bootstrap',
+	'CurveModel',
+	'FitCurveOutput',
 	'fit_linear',
 	'fit_const_yerr',
 	'fit_oversampling',
@@ -109,7 +107,7 @@ def fit_norm_cov(cov):
 			cov[j, i] = cov[i, j]
 	return cov
 
-def _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=True, conv_diff=1e-7, max_cycles=5, **kw):
+def _fit_curve_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=True, conv_diff=1e-7, max_cycles=5, **kw):
 	cycles = 1
 	while True:
 		if cycles >= max_cycles:
@@ -134,7 +132,7 @@ class _Nonedict(dict):
 			if not (kw[k] is None):
 				self[k] = kw[k]
 
-def _fit_generic_odr(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, dfdp=None, dfdpdx=None, **kw):
+def _fit_curve_odr(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, dfdp=None, dfdpdx=None, **kw):
 	dy2 = dy**2
 	dx2 = dx**2
 	def fun(p):
@@ -164,7 +162,7 @@ def _fit_generic_odr(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, d
 	cov = np.dot(VT.T / s**2, VT)
 	return par, cov, result
 
-def _fit_generic_ml(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdp=None, **kw):
+def _fit_curve_ml(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdp=None, **kw):
 	idy = 1 / dy
 	idx = 1 / dx
 	def fun(px):
@@ -196,7 +194,7 @@ def _fit_generic_ml(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdp=None, **kw)
 	cov = np.dot(VT.T / s**2, VT)
 	return par, cov, result
 
-class FitOutput:
+class FitCurveOutput:
 	
 	def __init__(self, par=None, cov=None, px=None, pxcov=None, nump=None, datax=None, datay=None, fitx=None, fity=None, chisq=None, delta_x=None, delta_y=None, method=None, rawoutput=None, check=True):
 		if not (px is None):
@@ -271,11 +269,11 @@ class FitOutput:
 		
 		self.method = method
 
-class FitModel:
+class CurveModel:
 
 	def __init__(self, f, symb=False, dfdx=None, dfdp=None, dfdpdx=None):
 		"""if symb=True, use sympy to obtain derivatives from f
-		or f is a scipy.odr.Model or a FitModel to copy"""
+		or f is a scipy.odr.Model or a CurveModel to copy"""
 		if symb:
 			args = inspect.getargspec(f).args
 			xsym = sympy.symbols('x', real=True)
@@ -286,7 +284,7 @@ class FitModel:
 			self._dfdpdxs = [sympy.lambdify(syms, f(*syms).diff(xsym).diff(p), "numpy") for p in psym]
 			self._f = sympy.lambdify(syms, f(*syms), "numpy")
 			self._f_sym = f
-			self._repr = 'FitModel(y = {})'.format(f(*syms))
+			self._repr = 'CurveModel(y = %s)' % (str(f(*syms)).replace('**', '^').replace('*', '·'))
 			self._symb = True
 		else:
 			self._dfdx = dfdx
@@ -295,11 +293,21 @@ class FitModel:
 			self._dfdps = None
 			self._dfdpdxs = None
 			self._f = f
-			self._repr = 'FitModel(y = {})'.format(f)
+			self._repr = 'CurveModel(y = {})'.format(f)
 			self._symb = False
 	
 	def __repr__(self):
 		return self._repr
+	
+	def latex(self):
+		if self._symb:
+			args = inspect.getargspec(self._f_sym).args
+			xsym = sympy.symbols('x', real=True)
+			psym = [sympy.symbols('p_{%d}' % i, real=True) for i in range(len(args) - 1)]
+			syms = [xsym] + psym
+			return sympy.latex(self._f_sym(*syms))
+		else:
+			return '\\mathtt{%s}' % format(self._f)
 		
 	def f(self):
 		"""return function"""
@@ -383,23 +391,23 @@ class FitModel:
 		else:
 			return self._dfdpdx
 
-def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True, method='auto', full_output=True, check=True, print_info=0, **kw):
-	"""f may be either callable or FitModel"""
+def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True, method='auto', full_output=True, check=True, print_info=0, **kw):
+	"""f may be either callable or CurveModel"""
 	print_info = int(print_info)
 	
 	if print_info >= 1:
-		print('################ fit_generic ################')
+		print('################ fit_curve ################')
 		print()
 	
 	# MODEL
 
-	if isinstance(f, FitModel):
+	if isinstance(f, CurveModel):
 		model = f
 		if print_info >= 1:
 			print('Model given: {}'.format(model))
 			print()
 	else:
-		model = FitModel(f, symb=False)
+		model = CurveModel(f, symb=False)
 		if print_info >= 1:
 			print('Model created from f: {}'.format(model))
 			print()
@@ -448,10 +456,10 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		if not absolute_sigma:
 			cov *= chisq / (len(x) - len(par))
 		if full_output:
-			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=output.delta, delta_y=output.eps, datax=x, datay=y, fitx=output.xplus, fity=output.y, rawoutput=output, method=method, check=False)
+			out = FitCurveOutput(par=par, cov=cov, chisq=chisq, delta_x=output.delta, delta_y=output.eps, datax=x, datay=y, fitx=output.xplus, fity=output.y, rawoutput=output, method=method, check=False)
 			# (!) check=False because ODRPACK may return slightly inconsistent fity, delta_y; the problem is in ODRPACK itself, not in the wrapper. Anyway, inconsistencies are reasonable, so we just look away.
 		else:
-			out = FitOutput(par=par, cov=cov, check=check)
+			out = FitCurveOutput(par=par, cov=cov, check=check)
 		if print_info == 1:
 			output.pprint()
 
@@ -478,7 +486,7 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 			
 		verbosity = max(0, min(print_info - 1, 2))
 		
-		par, cov, output = _fit_generic_odr(f, x, y, dx, dy, np.atleast_1d(p0), dfdx=dfdx, dfdps=dfdps, dfdpdxs=dfdpdxs, dfdp=dfdp, dfdpdx=dfdpdx, verbose=verbosity, **kw)
+		par, cov, output = _fit_curve_odr(f, x, y, dx, dy, np.atleast_1d(p0), dfdx=dfdx, dfdps=dfdps, dfdpdxs=dfdpdxs, dfdp=dfdp, dfdpdx=dfdpdx, verbose=verbosity, **kw)
 		
 		if full_output or not absolute_sigma:
 			deriv = dfdx(x, *par)
@@ -490,9 +498,9 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 			fact = (y - f(x, *par)) / err2
 			delta_x = fact * deriv * dx**2
 			delta_y = -fact * dy**2
-			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y, datax=x, datay=y, method=method, rawoutput=output, check=check)
+			out = FitCurveOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y, datax=x, datay=y, method=method, rawoutput=output, check=check)
 		else:
-			out = FitOutput(par=par, cov=cov, check=check)
+			out = FitCurveOutput(par=par, cov=cov, check=check)
 		
 		if print_info >= 1:
 			print('Result:')
@@ -508,7 +516,7 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		
 		verbosity = max(0, min(print_info - 1, 2))
 		
-		px, pxcov, output = _fit_generic_ml(f, x, y, dx, dy, p0, dfdx=dfdx, dfdps=dfdps, dfdp=dfdp, verbose=verbosity, **kw)
+		px, pxcov, output = _fit_curve_ml(f, x, y, dx, dy, p0, dfdx=dfdx, dfdps=dfdps, dfdp=dfdp, verbose=verbosity, **kw)
 		
 		if full_output or not absolute_sigma:
 			par = px[:len(p0)]
@@ -517,9 +525,9 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 		if not absolute_sigma:
 			pxcov *= chisq / (len(y) - len(par))
 		if full_output:
-			out = FitOutput(px=px, pxcov=pxcov, datax=x, datay=y, chisq=chisq, method=method, rawoutput=output, check=check)
+			out = FitCurveOutput(px=px, pxcov=pxcov, datax=x, datay=y, chisq=chisq, method=method, rawoutput=output, check=check)
 		else:
-			out = FitOutput(px=px, pxcov=pxcov, check=check)
+			out = FitCurveOutput(px=px, pxcov=pxcov, check=check)
 		
 		if print_info >= 1:
 			print('Result:')
@@ -541,7 +549,7 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 				return (f(x + h, *p) - f(x, *p)) / h
 		
 		par, cov = optimize.curve_fit(f, x, y, p0=p0, absolute_sigma=absolute_sigma, jac=jac, **kw)
-		par, cov, cycles = _fit_generic_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, jac=jac, **kw)
+		par, cov, cycles = _fit_curve_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, jac=jac, **kw)
 		
 		if cycles == -1:
 			raise RuntimeError('Maximum number (%d) of fit cycles reached' % max_cycles)
@@ -553,10 +561,10 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 			fact = (y - f(x, *par)) / err2
 			delta_x = fact * deriv * dx**2
 			delta_y = -fact * dy**2
-			out = FitOutput(par=par, cov=cov, datax=x, datay=y, chisq=chisq, method=method, check=check, delta_x=delta_x, delta_y=delta_y)
+			out = FitCurveOutput(par=par, cov=cov, datax=x, datay=y, chisq=chisq, method=method, check=check, delta_x=delta_x, delta_y=delta_y)
 			out.cycles = cycles
 		else:
-			out = FitOutput(par=par, cov=cov, check=check)
+			out = FitCurveOutput(par=par, cov=cov, check=check)
 	
 		if print_info >= 1:
 			print('Cycles: %d' % cycles)
@@ -575,9 +583,9 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 			delta_x = np.zeros(len(x))
 			delta_y = y - f(x, *par)
 			chisq = np.sum((delta_y / dy) ** 2)
-			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y, datax=x, datay=y, method=method, check=check)
+			out = FitCurveOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y, datax=x, datay=y, method=method, check=check)
 		else:
-			out = FitOutput(par=par, cov=cov, check=check)
+			out = FitCurveOutput(par=par, cov=cov, check=check)
 	
 		if print_info >= 1:
 			print('Result:')
@@ -595,9 +603,9 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 			delta_x = np.zeros(len(x))
 			delta_y = y - f(x, *par)
 			chisq = np.sum(delta_y ** 2)
-			out = FitOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y, datax=x, datay=y, method=method, check=check)
+			out = FitCurveOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y, datax=x, datay=y, method=method, check=check)
 		else:
-			out = FitOutput(par=par, cov=cov, check=check)
+			out = FitCurveOutput(par=par, cov=cov, check=check)
 
 		if print_info >= 1:
 			print('Result:')
@@ -610,7 +618,268 @@ def fit_generic(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=Tr
 
 	if print_info >= 1:
 		print()
-		print('############## END fit_generic ##############')
+		print('############## END fit_curve ##############')
+	
+	return out
+
+class FitCurveBootstrapOutput:
+	
+	def __init__(self):
+		pass
+
+def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method='auto', plot=dict(), eta=False):
+
+	n = len(xmean) # number of points
+	
+	# model
+	if isinstance(f, CurveModel):
+		model = f
+	else:
+		model = CurveModel(f, symb=False)
+	f = model.f()
+	fstr = model.__repr__()
+	flatex = model.latex()
+
+	# initialize output arrays
+	p0shape = [len(p0) for p0 in p0s]
+	fp = np.empty([len(dxs), len(dys)] + p0shape + [len(p0s)]) # fitted parameters (mean over MC)
+	cp = np.empty([len(dxs), len(dys)] + p0shape + 2 * [len(p0s)]) # fitted parameters mean covariance matrices
+	chisq = np.empty(mcn) # chisquares from 1 MC run
+	pars = np.empty((mcn, len(p0s))) # parameters from 1 MC run
+	covs = np.empty((mcn, len(p0s), len(p0s))) # covariance matrices from 1 MC run
+	times = np.empty(mcn) # execution times from 1 MC run
+
+	def plot_text(string, loc=2, ax=None, **kw):
+		locs = [
+			[],
+			[.95, .95, 'right', 'top'],
+			[.05, .95, 'left', 'top']
+		]
+		loc = locs[loc]
+		ax.text(loc[0], loc[1], string, horizontalalignment=loc[2], verticalalignment=loc[3], transform=ax.transAxes, **kw)
+	
+	if eta:		
+		etaobj = Eta()
+	plots_single = []
+	for ll in range(len(dys)):
+		dy = dys[ll]
+		for l in range(len(dxs)):
+			dx = dxs[l]
+			for K in np.ndindex(*p0shape):
+				p0 = [p0s[i][K[i]] for i in range(len(K))]
+			
+				# generate mean data
+				ymean = f(xmean, *p0)
+			
+				# run fits
+				for i in range(mcn):
+					
+					if eta:
+						# compute progress
+						progress = l + len(dxs) * ll
+						for j in range(len(K)):
+							progress *= p0shape[j]
+							progress += K[j]
+						progress *= mcn
+						progress += i
+						progress /= len(dxs) * len(dys) * np.prod(p0shape) * mcn
+						etaobj.etaprint(progress)
+				
+					# generate data
+					deltax = stats.norm.rvs(size=n)
+					x = xmean + dx * deltax
+					deltay = stats.norm.rvs(size=n)
+					y = ymean + dy * deltay
+				
+					# fit
+					start = time.time()
+					out = fit_curve(model, x, y, dx, dy, p0=p0, method=method, **_Nonedict(max_cycles=10 if method == 'ev' else None))
+					end = time.time()
+				
+					# save results
+					if plot.get('single', False):
+						times[i] = end - start
+						chisq[i] = out.chisq
+					pars[i] = out.par
+					covs[i] = out.cov
+			
+				# save results
+				icovs = np.empty(covs.shape)
+				for i in range(len(icovs)):
+					icovs[i] = linalg.inv(covs[i])
+				pc = linalg.inv(icovs.sum(axis=0))
+				wpar = np.empty(pars.shape)
+				for i in range(len(wpar)):
+					wpar[i] = icovs[i].dot(pars[i])
+				pm = pc.dot(wpar.sum(axis=0))
+				ps = np.sqrt(np.diag(pc))
+
+				fp[(l, ll) + K] = pm
+				cp[(l, ll) + K] = pc
+			
+				if plot.get('single', False):
+					from matplotlib import pyplot as plt
+				
+					prho = pc / np.outer(ps, ps)
+
+					pdist = (pm - np.array(p0)) / ps
+					pdistc = (np.outer(pm - np.array(p0), pm - np.array(p0)) - pc) / np.sqrt(pc**2 + np.outer(ps, ps)**2)
+					chidist = (chisq.mean() - (n-len(p0))) / chisq.std(ddof=1) * np.sqrt(len(chisq))
+				
+					pvalue = stats.kstest(chisq, 'chi2', (n-len(p0),))[1]
+							
+					maxscatter = 1000
+					histkw = dict(
+						bins=int(np.sqrt(min(mcn, 1000))),
+						color=(.9,.9,.9),
+						edgecolor=(.7, .7, .7)
+					)
+					if len(p0) == 1:
+						rows = 2
+						cols = 2
+					elif len(p0) == 2:
+						rows = 3
+						cols = 3
+					else:
+						rows = 1 + len(p0)
+						cols = len(p0)
+				
+					fig = plt.figure(figsize=(4*cols, 2.3*rows))
+					fig.clf()
+					fig.set_tight_layout(True)
+					fig.canvas.set_window_title('%s, method “%s”' % (fstr, method))
+				
+					# histogram of parameter; diagonal
+					for i in range(len(p0)):					
+						ax = fig.add_subplot(rows, cols, 1 + i * (1 + cols))
+						ax.set_title("$(p_{%d}'-{p}_{%d})/\sigma_{%d}$" % (i, i, i))
+						S = (pars[:,i] - p0[i]) / np.sqrt(covs[:,i,i])
+						ax.hist(S, **histkw)
+						plot_text("$p_%d = $%g\n$\\bar{p}_{%d}-p_{%d} = $%.2g $\\bar{\sigma}_{%d}$" % (i, p0[i], i, i, pdist[i], i), ax=ax)
+					
+					# histogram of covariance; lower triangle
+					for i in range(len(p0)):
+						for j in range(i):
+							ax = fig.add_subplot(rows, cols, 1 + i * cols + j)
+							ax.set_title("$((p_{%d}'-p_{%d})\cdot(p_{%d}'-p_{%d})-\sigma_{%d%d})/\sqrt{\sigma_{%d%d}^2+\sigma_{%d}^2\sigma_{%d}^2}$" % (i, i, j, j, i, j, i, j, i, j))
+							C = ((pars[:,i] - p0[i]) * (pars[:,j] - p0[j]) - covs[:,i,j]) / np.sqrt(covs[:,i,j]**2 + covs[:,i,i]*covs[:,j,j])
+							ax.hist(C, **histkw)
+							plot_text("$\\bar{\\rho}_{%d%d} = $%.2g\n$(\\bar{p}_{%d}-p_{%d})\cdot(\\bar{p}_{%d}-p_{%d})-\\bar{\sigma}_{%d%d} = $%.2g $\sqrt{\\bar{\sigma}_{%d%d}^2+\\bar{\sigma}_{%d}^2\\bar{\sigma}_{%d}^2}$" % (i, j, prho[i,j], i, i, j, j, i, j, pdistc[i,j], i, j, i, j), ax=ax)
+				
+					# scatter plot of pairs of parameters; upper triangle
+					for i in range(len(p0)):
+						for j in range(i + 1, len(p0)):
+							ax = fig.add_subplot(rows, cols, 1 + i * cols + j)
+							ax.set_title("$(p_{%d}'-p_{%d})/\sigma_{%d}$, $(p_{%d}'-p_{%d})/\sigma_{%d}$" % (i, i, i, j, j, j))
+							X = (pars[:, i] - p0[i]) / np.sqrt(covs[:,i,i])
+							Y = (pars[:, j] - p0[j]) / np.sqrt(covs[:,j,j])
+							if len(X) > maxscatter:
+								X = X[::int(ceil(len(X) / maxscatter))]
+								Y = Y[::int(ceil(len(Y) / maxscatter))]
+							ax.plot(X, Y, '.k', markersize=3, alpha=0.35)
+							ax.grid()
+				
+					# histogram of chisquare; last row column 1
+					ax = fig.add_subplot(rows, cols, 1 + cols * (rows - 1))
+					ax.set_title('$\chi^2$')
+					plot_text('K.S. test p-value = %.2g %%\n$\mathrm{dof}=n-{\#}p = $%d\n$N\cdot(\\bar{\chi}^2 - \mathrm{dof}) = $%.2g $\sqrt{2\cdot\mathrm{dof}}$' % (100*pvalue, n-len(p0), chidist), loc=1, ax=ax)
+					ax.hist(chisq, **histkw)
+
+					# histogram of execution time; last row column 2
+					ax = fig.add_subplot(rows, cols, 2 + cols * (rows - 1))
+					ax.set_title('time')
+					plot_text('Average time = %ss' % num2si(times.mean(), format='%.3g'), loc=1, ax=ax)
+					ax.hist(times, **histkw)
+					ax.ticklabel_format(style='sci', scilimits=(-2,2))
+
+					# example data; last row column 3 (or first row last column)
+					ax = fig.add_subplot(rows, cols, (3 + cols * (rows - 1)) if len(p0) >= 2 else cols)
+					ax.set_title('Example fit')
+					fx = np.linspace(min(xmean), max(xmean), 1000)
+					ax.plot(fx, f(fx, *p0), '-', color='lightgray', linewidth=5, label='$y=%s$' % flatex, zorder=1)
+					ax.errorbar(x, y, dy, dx, fmt=',k', capsize=0, label='Data', zorder=2)
+					ax.plot(fx, f(fx, *pars[-1]), 'r-', linewidth=1, label='Fit', zorder=3, alpha=1)
+					# plot_text('$y=%s$\n$y=%s$' % (flatex, sympy.latex(fsym(xsym, *p0))), fontsize=20, ax=ax)
+					ax.ticklabel_format(style='sci', axis='both', scilimits=(-3,3))
+					ax.legend(loc=0, fontsize='small')
+				
+					# save figure
+					plots_single.append(fig)
+
+	if plot.get('vsp0', False):
+		from matplotlib import pyplot as plt
+		fig = plt.figure(figsize=(10,7))
+		fig.clf()
+		fig.set_tight_layout(True)
+		fig.canvas.set_window_title('%s, method “%s”, parameter biases' % (fstr, method))
+		for i in range(len(p0s)): # p_i = fitted
+			for j in range(len(p0s)): # p_j = true
+				ax = fig.add_subplot(len(p0s), len(p0s), 1 + i * len(p0s) + j)
+				K = [0] * len(p0s)
+				K[j] = Ellipsis
+				K = tuple(K)
+				ax.errorbar(p0s[j], fp[(0, 0) + K + (i,)] - (np.asarray(p0s[i]) if i == j else p0s[i][0]), np.sqrt(cp[(0, 0) + K + (i, i)]), fmt=',')
+				ax.set_xlabel('True $p_{%d}$' % j)
+				ax.set_ylabel('$p_{%d}\'-p_{%d}$' % (i, i))
+				pstr = ''
+				for k in range(len(p0s)):
+					if k != j:
+						pstr += '$p_{%d}$ = %.2g\n' % (k, p0s[k][0])
+				plot_text(pstr, ax=ax)
+				ax.ticklabel_format(style='sci', axis='both', scilimits=(-3,3))
+				ax.grid()
+				
+		plot_vsp0 = fig
+	else:
+		plot_vsp0 = None
+
+	if plot.get('vsds', False):
+		from matplotlib import pyplot as plt
+	
+		fig = plt.figure(figsize=(10,7))
+		fig.clf()
+		fig.set_tight_layout(True)
+		fig.canvas.set_window_title('%s, method “%s”, parameters vs. errors' % (fstr, method))
+	
+		ds = [
+			[dxs, dys, 'x', 'y', (Ellipsis, 0)],
+			[dys, dxs, 'y', 'x', (0, Ellipsis)]
+		]
+		for i in range(len(p0s)):
+			for j in range(2):
+				ax = fig.add_subplot(len(p0s), 2, 2*i + j + 1)
+				if i == 0:
+					pstr = ''
+					for k in range(len(p0s)):
+						pstr += '$p_{%d}$ = %.2g\n' % (k, p0s[k][0])
+					pstr += '$\sqrt{\sum\Delta %s^2/n}=$%.2g' % (ds[j][3], np.sqrt((ds[j][1][0]**2).sum() / n))
+					plot_text(pstr, ax=ax)
+				if i == len(p0s) - 1:
+					ax.set_xlabel('$\sqrt{\sum\Delta %s^2/n}$' % ds[j][2])
+				if j == 0:
+					ax.set_ylabel('$p_{%d}\'-p_{%d}$' % (i, i))
+				sel = ds[j][4] + tuple([0] * len(p0s)) + (i,)
+				Y = fp[sel] - np.asarray(p0s[i])
+				DY = np.sqrt(cp[sel + (i,)])
+				ax.errorbar(np.sqrt((ds[j][0]**2).sum(axis=-1) / n), Y, DY, fmt=',')
+				pvalue = stats.chi2.sf(sum((Y / DY)**2), len(Y))
+				plot_text('p-value = %.2g %%' % (pvalue * 100), loc=1, ax=ax)
+		
+		plot_vsds = fig
+	else:
+		plot_vsds = None
+	
+	out = FitCurveBootstrapOutput()
+	out.fp = fp
+	out.cp = cp
+	plotout = dict()
+	if len(plots_single) > 0:
+		plotout['single'] = plots_single
+	if not (plot_vsp0 is None):
+		plotout['vsp0'] = plot_vsp0
+	if not (plot_vsds is None):
+		plotout['vsds'] = plot_vsds
+	out.plot = plotout
 	
 	return out
 
@@ -1845,18 +2114,17 @@ def fit_generic_xyerr(f, dfdx, x, y, sigmax, sigmay, p0=None, print_info=False, 
 	"""
 	THIS FUNCTION IS DEPRECATED
 	"""
-	model = FitModel(f, dfdx=dfdx, symb=False)
-	return fit_generic(model, x, y, dx=sigmax, dy=sigmay, p0=p0, absolute_sigma=absolute_sigma, print_info=print_info, method='ev', conv_diff=conv_diff, max_cycles=max_cycles, **kw)
+	model = CurveModel(f, dfdx=dfdx, symb=False)
+	return fit_curve(model, x, y, dx=sigmax, dy=sigmay, p0=p0, absolute_sigma=absolute_sigma, print_info=print_info, method='ev', conv_diff=conv_diff, max_cycles=max_cycles, **kw)
 
 def fit_generic_xyerr2(f, x, y, sigmax, sigmay, p0=None, print_info=False, absolute_sigma=True):
 	"""
 	THIS FUNCTION IS DEPRECATED
 	"""
-	model = FitModel(f, symb=False)
-	return fit_generic(model, x, y, dx=sigmax, dy=sigmay, p0=p0, absolute_sigma=absolute_sigma, print_info=print_info, method='odrpack')
+	model = CurveModel(f, symb=False)
+	return fit_curve(model, x, y, dx=sigmax, dy=sigmay, p0=p0, absolute_sigma=absolute_sigma, print_info=print_info, method='odrpack')
 
 curve_fit_patched = optimize.curve_fit
-curve_fit_patched.__doc__ = '\nTHIS FUNCTION IS DEPRECATED\n'
 
 def etastart():
 	"""
