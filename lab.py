@@ -29,7 +29,6 @@ import uncertainties
 # fit_curve
 # pfix = [True, False ...] i True vengono bloccati
 # pfix = [0, 3, 5...] i parametri a questi indici vengono bloccati
-# bounds
 # supportare dx == 0 xor dy == 0
 #   odrpack: ifixx per le dx nulle, se tutte nulle fit_type=2.
 #            per le dy nulle non so.
@@ -37,6 +36,11 @@ import uncertainties
 #   ev: dx ok, dy bisogna sistemarle nel fit iniziale (metterne di più piccole delle altre? ignorarle?)
 #   leastsq, wleastsq: dx ignorato, dy nulle non supportate e basta.
 # linodr diventa molto instabile se non gli si da le derivate, è un bug della mia derivata discreta dfdx?
+# aggiungere px, pxcov a odrpack calcolandolo dopo il fit.
+# ml diventa instabile (comunque entro l'1% dei fit) con errori sulle x grossi e modello oscillante.
+#
+# fit_curve_bootstrap
+# Non mi torna che i fit abbiano un bias se aumento gli errori sulle x, ma non se aumento sulle y. Ho provato a vedere se era per il fatto che nelle medie pesate taglio la parte di covarianza delle x ma mettercela non ha risolto (comunque è giusto mettercela, aggiungere pxcov a odrpack). La verosimiglianza non dovrebbe avere il massimo in un punto diverso se uso x*, theta oppure y*, theta. La cosa su cui ho dubbio è la stima della covarianza con l'hessiana, magari quella dipende dalla parametrizzazione? Verificare.
 #
 # fit_oversampling
 # non funziona con tutti i campioni uguali o quasi, bisogna usare metodi bayesiani
@@ -162,7 +166,7 @@ def _fit_curve_odr(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, dfd
 	cov = np.dot(VT.T / s**2, VT)
 	return par, cov, result
 
-def _fit_curve_ml(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdp=None, **kw):
+def _fit_curve_ml(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdp=None, bounds=None, **kw):
 	idy = 1 / dy
 	idx = 1 / dx
 	def fun(px):
@@ -184,7 +188,13 @@ def _fit_curve_ml(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdp=None, **kw):
 	else:
 		jac = None
 	px_scale = np.concatenate((np.ones(len(p0)), dx))
-	kw.update(_Nonedict(jac=jac))
+	if not (bounds is None):
+		bnds = np.empty((2, len(p0) + len(x)))
+		bnds[:,:len(p0)] = np.asarray(bounds).reshape(2,-1)
+		bnds[:,-len(x):] = [[-np.inf], [np.inf]]
+	else:
+		bnds = None
+	kw.update(_Nonedict(jac=jac, bounds=bnds))
 	result = optimize.least_squares(fun, np.concatenate((p0, x)), x_scale=px_scale, **kw)
 	par = result.x
 	_, s, VT = linalg.svd(result.jac, full_matrices=False)
@@ -391,7 +401,7 @@ class CurveModel:
 		else:
 			return self._dfdpdx
 
-def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True, method='auto', full_output=True, check=True, print_info=0, **kw):
+def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolute_sigma=True, method='auto', full_output=True, check=True, print_info=0, **kw):
 	"""f may be either callable or CurveModel"""
 	print_info = int(print_info)
 	
@@ -416,9 +426,11 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True
 	
 	if method == 'auto':
 		if (dy is None) and not (dx is None):
-			method = 'linodr'
+			method = 'linodr' # only linodr supports errors only along x
+		elif bounds is None:
+			method = 'odrpack' # generally good method but does not support bounds
 		else:
-			method = 'odrpack'
+			method = 'ml' # much slower than odrpack and linodr, but supports bounds and is more correct than linodr
 		if print_info >= 1:
 			print('Method chosen automatically: "%s"' % method)
 			print()
@@ -460,8 +472,13 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True
 			# (!) check=False because ODRPACK may return slightly inconsistent fity, delta_y; the problem is in ODRPACK itself, not in the wrapper. Anyway, inconsistencies are reasonable, so we just look away.
 		else:
 			out = FitCurveOutput(par=par, cov=cov, check=check)
-		if print_info == 1:
-			output.pprint()
+		if print_info >= 1:
+			if print_info > 1:
+				print()
+			else:
+				print(output.stopreason)
+			print('Result:')
+			print(format_par_cov(par, cov))
 
 	##### LINEARIZED ODR #####
 
@@ -486,7 +503,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True
 			
 		verbosity = max(0, min(print_info - 1, 2))
 		
-		par, cov, output = _fit_curve_odr(f, x, y, dx, dy, np.atleast_1d(p0), dfdx=dfdx, dfdps=dfdps, dfdpdxs=dfdpdxs, dfdp=dfdp, dfdpdx=dfdpdx, verbose=verbosity, **kw)
+		par, cov, output = _fit_curve_odr(f, x, y, dx, dy, np.atleast_1d(p0), dfdx=dfdx, dfdps=dfdps, dfdpdxs=dfdpdxs, dfdp=dfdp, dfdpdx=dfdpdx, verbose=verbosity, bounds=bounds, **kw)
 		
 		if full_output or not absolute_sigma:
 			deriv = dfdx(x, *par)
@@ -503,6 +520,10 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True
 			out = FitCurveOutput(par=par, cov=cov, check=check)
 		
 		if print_info >= 1:
+			if print_info > 1:
+				print()
+			else:
+				print(output.message)
 			print('Result:')
 			print(format_par_cov(par, cov))
 	
@@ -516,7 +537,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True
 		
 		verbosity = max(0, min(print_info - 1, 2))
 		
-		px, pxcov, output = _fit_curve_ml(f, x, y, dx, dy, p0, dfdx=dfdx, dfdps=dfdps, dfdp=dfdp, verbose=verbosity, **kw)
+		px, pxcov, output = _fit_curve_ml(f, x, y, dx, dy, p0, dfdx=dfdx, dfdps=dfdps, dfdp=dfdp, verbose=verbosity, bounds=bounds, **kw)
 		
 		if full_output or not absolute_sigma:
 			par = px[:len(p0)]
@@ -530,6 +551,10 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True
 			out = FitCurveOutput(px=px, pxcov=pxcov, check=check)
 		
 		if print_info >= 1:
+			if print_info > 1:
+				print()
+			else:
+				print(output.message)
 			print('Result:')
 			print(format_par_cov(px[:len(p0)], pxcov[:len(p0),:len(p0)]))
 	
@@ -548,8 +573,8 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True
 				h = x * diff_step + diff_step
 				return (f(x + h, *p) - f(x, *p)) / h
 		
-		par, cov = optimize.curve_fit(f, x, y, p0=p0, absolute_sigma=absolute_sigma, jac=jac, **kw)
-		par, cov, cycles = _fit_curve_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, jac=jac, **kw)
+		par, cov = optimize.curve_fit(f, x, y, p0=p0, absolute_sigma=absolute_sigma, jac=jac, bounds=bounds, **kw)
+		par, cov, cycles = _fit_curve_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, jac=jac, bounds=bounds, **kw)
 		
 		if cycles == -1:
 			raise RuntimeError('Maximum number (%d) of fit cycles reached' % max_cycles)
@@ -577,7 +602,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True
 		f = model.f()
 		jac = model.dfdp_curve_fit(len(x))
 		
-		par, cov = optimize.curve_fit(f, x, y, sigma=dy, p0=p0, absolute_sigma=absolute_sigma, jac=jac, **kw)
+		par, cov = optimize.curve_fit(f, x, y, sigma=dy, p0=p0, absolute_sigma=absolute_sigma, jac=jac, bounds=bounds, **kw)
 		
 		if full_output:
 			delta_x = np.zeros(len(x))
@@ -597,7 +622,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, absolute_sigma=True
 		f = model.f()
 		jac = model.dfdp_curve_fit(len(x))
 		
-		par, cov = optimize.curve_fit(f, x, y, p0=p0, absolute_sigma=False, jac=jac, **kw)
+		par, cov = optimize.curve_fit(f, x, y, p0=p0, absolute_sigma=False, jac=jac, bounds=bounds, **kw)
 
 		if full_output:
 			delta_x = np.zeros(len(x))
@@ -627,7 +652,7 @@ class FitCurveBootstrapOutput:
 	def __init__(self):
 		pass
 
-def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method='auto', plot=dict(), eta=False):
+def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method='auto', plot=dict(), eta=False, **kw):
 
 	n = len(xmean) # number of points
 	
@@ -693,7 +718,7 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 				
 					# fit
 					start = time.time()
-					out = fit_curve(model, x, y, dx, dy, p0=p0, method=method, **_Nonedict(max_cycles=10 if method == 'ev' else None))
+					out = fit_curve(model, x, y, dx, dy, p0=p0, method=method, **_Nonedict(max_cycles=10 if method == 'ev' else None), **kw)
 					end = time.time()
 				
 					# save results
