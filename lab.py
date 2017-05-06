@@ -8,7 +8,6 @@ import time
 from scipy import odr, optimize, stats, special, linalg
 import os
 import sympy
-import numdifftools as numdiff
 import uncertainties
 
 # TODO
@@ -26,9 +25,10 @@ import uncertainties
 # opzione si=True per formattare come num2si
 # opzione errdig=(float)|'pdg' per scegliere le cifre dell'errore o usare il formato del PDG
 #
+# _fit_curve_ev
+# sostituire conv_diff con epsrel e epsabs
+#
 # fit_curve
-# pfix = [True, False ...] i True vengono bloccati
-# pfix = [0, 3, 5...] i parametri a questi indici vengono bloccati
 # supportare dx == 0 xor dy == 0
 #   odrpack: ifixx per le dx nulle, se tutte nulle fit_type=2.
 #            per le dy nulle non so.
@@ -38,8 +38,10 @@ import uncertainties
 # linodr diventa molto instabile se non gli si da le derivate, è un bug della mia derivata discreta dfdx?
 # aggiungere px, pxcov a odrpack calcolandolo dopo il fit.
 # ml diventa instabile (comunque entro l'1% dei fit) con errori sulle x grossi e modello oscillante.
+# controllare che funzioni con x non array se dx is None
 #
 # fit_curve_bootstrap
+# supportare pfix
 # Non mi torna che i fit abbiano un bias se aumento gli errori sulle x, ma non se aumento sulle y. Ho provato a vedere se era per il fatto che nelle medie pesate taglio la parte di covarianza delle x ma mettercela non ha risolto (comunque è giusto mettercela, aggiungere pxcov a odrpack). La verosimiglianza non dovrebbe avere il massimo in un punto diverso se uso x*, theta oppure y*, theta. La cosa su cui ho dubbio è la stima della covarianza con l'hessiana, magari quella dipende dalla parametrizzazione? Verificare.
 #
 # fit_oversampling
@@ -59,17 +61,23 @@ __all__ = [ # things imported when you do "from lab import *"
 	'fit_const_yerr',
 	'fit_oversampling',
 	'util_mm_er',
+	'util_mm_esr',
+	'util_mm_esr2',
 	'util_mm_list',
 	'mme',
 	'num2si',
 	'num2sup',
 	'num2sub',
 	'unicode_pm',
+	'format_par_cov',
 	'xe',
 	'xep',
 	'util_format',
+	'util_timecomp',
+	'util_timestr',
 	'Eta',
-	'nextfilename'
+	'nextfilename',
+	'sanitizefilename'
 ]
 
 # __all__ += [ # things for backward compatibility
@@ -401,15 +409,35 @@ class CurveModel:
 		else:
 			return self._dfdpdx
 
+def _apply_pfree(f, pfree, p0):
+	if not (f is None) and not all(pfree):
+		n_par = np.copy(p0)
+		def F(x, *par):
+			n_par[pfree] = par
+			return f(x, *n_par)
+		return F
+	else:
+		return f
+
+def _apply_pfree_par_cov(par, cov, pfree, p0):
+	if not all(pfree):
+		n_par = np.empty(len(p0), dtype=par.dtype)
+		n_par[pfree] = par
+		n_par[~pfree] = p0
+		n_cov = np.zeros([len(p0)] * 2, dtype=cov.dtype)
+		n_cov[np.outer(pfree, pfree)] = cov
+		return n_par, n_cov
+	else:
+		return par, cov
+
 def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolute_sigma=True, method='auto', full_output=True, check=True, print_info=0, **kw):
 	"""f may be either callable or CurveModel"""
-	print_info = int(print_info)
 	
 	if print_info >= 1:
 		print('################ fit_curve ################')
 		print()
 	
-	# MODEL
+	##### MODEL #####
 
 	if isinstance(f, CurveModel):
 		model = f
@@ -422,12 +450,28 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 			print('Model created from f: {}'.format(model))
 			print()
 	
-	# METHOD
+	p0 = np.atleast_1d(p0)
+	if not (pfix is None):
+		pfix = np.asarray(pfix)
+		if np.issubdtype('bool', pfix.dtype):
+			pfree = ~pfix
+		elif np.issubdtype('int', pfix.dtype) or np.issubdtype('uint', pfix.dtype):
+			pfree = np.ones(len(p0), dtype=bool)
+			pfree[pfix] = False
+	else:
+		pfree = np.ones(len(p0), dtype=bool)
+	
+	if not (bounds is None):
+		bounds = np.asarray(bounds).reshape(2,-1)[:,pfree]
+	else:
+		bounds = np.array([[-np.inf] * len(p0), [np.inf] * len(p0)])[:,pfree]
+
+	##### METHOD #####
 	
 	if method == 'auto':
 		if (dy is None) and not (dx is None):
 			method = 'linodr' # only linodr supports errors only along x
-		elif bounds is None:
+		elif bounds is None or (all(bounds[0] == -np.inf) and all(bounds[1] == np.inf)):
 			method = 'odrpack' # generally good method but does not support bounds
 		else:
 			method = 'ml' # much slower than odrpack and linodr, but supports bounds and is more correct than linodr
@@ -447,7 +491,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 		
 		M = odr.Model(fcn, fjacb=fjacb, fjacd=fjacd)
 		data = odr.RealData(x, y, sx=dx, sy=dy)
-		ODR = odr.ODR(data, M, beta0=np.atleast_1d(p0), **kw)
+		ODR = odr.ODR(data, M, beta0=p0, ifixb=pfree, **kw)
 		if dx is None:
 			ODR.set_job(fit_type=2)
 		ip_init = max(0, min(print_info - 1, 2))
@@ -483,15 +527,15 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 	##### LINEARIZED ODR #####
 
 	elif method == 'linodr':
-		f = model.f()
-		dfdx = model.dfdx()
-		dfdps = model.dfdps()
-		dfdpdxs = model.dfdpdxs()
-		dfdp = model.dfdp(len(x))
-		dfdpdx = model.dfdpdx(len(x))
+		f = _apply_pfree(model.f(), pfree, p0)
+		dfdx = _apply_pfree(model.dfdx(), pfree, p0)
+		dfdps = _apply_pfree(model.dfdps(), pfree, p0)
+		dfdpdxs = _apply_pfree(model.dfdpdxs(), pfree, p0)
+		dfdp = _apply_pfree(model.dfdp(len(x)), pfree, p0)
+		dfdpdx = _apply_pfree(model.dfdpdx(len(x)), pfree, p0)
 		
 		if dfdx is None:
-			diff_step = kw.get('diff_step', np.finfo('float64').eps * 1024)
+			diff_step = kw.get('diff_step', np.finfo('float64').eps * 65536)
 			def dfdx(x, *p):
 				h = x * diff_step + diff_step
 				return (f(x + h, *p) - f(x, *p)) / h
@@ -503,7 +547,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 			
 		verbosity = max(0, min(print_info - 1, 2))
 		
-		par, cov, output = _fit_curve_odr(f, x, y, dx, dy, np.atleast_1d(p0), dfdx=dfdx, dfdps=dfdps, dfdpdxs=dfdpdxs, dfdp=dfdp, dfdpdx=dfdpdx, verbose=verbosity, bounds=bounds, **kw)
+		par, cov, output = _fit_curve_odr(f, x, y, dx, dy, p0[pfree], dfdx=dfdx, dfdps=dfdps, dfdpdxs=dfdpdxs, dfdp=dfdp, dfdpdx=dfdpdx, verbose=verbosity, bounds=bounds, **kw)
 		
 		if full_output or not absolute_sigma:
 			deriv = dfdx(x, *par)
@@ -515,8 +559,10 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 			fact = (y - f(x, *par)) / err2
 			delta_x = fact * deriv * dx**2
 			delta_y = -fact * dy**2
+			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
 			out = FitCurveOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y, datax=x, datay=y, method=method, rawoutput=output, check=check)
 		else:
+			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
 			out = FitCurveOutput(par=par, cov=cov, check=check)
 		
 		if print_info >= 1:
@@ -530,24 +576,26 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 	##### FULL-FEATURE MAXIMUM LIKELIHOOD #####
 	
 	elif method == 'ml':
-		f = model.f()
-		dfdx = model.dfdx()
-		dfdps = model.dfdps()
-		dfdp = model.dfdp(len(x))
+		f = _apply_pfree(model.f(), pfree, p0)
+		dfdx = _apply_pfree(model.dfdx(), pfree, p0)
+		dfdps = _apply_pfree(model.dfdps(), pfree, p0)
+		dfdp = _apply_pfree(model.dfdp(len(x)), pfree, p0)
 		
 		verbosity = max(0, min(print_info - 1, 2))
 		
-		px, pxcov, output = _fit_curve_ml(f, x, y, dx, dy, p0, dfdx=dfdx, dfdps=dfdps, dfdp=dfdp, verbose=verbosity, bounds=bounds, **kw)
+		px, pxcov, output = _fit_curve_ml(f, x, y, dx, dy, p0[pfree], dfdx=dfdx, dfdps=dfdps, dfdp=dfdp, verbose=verbosity, bounds=bounds, **kw)
 		
 		if full_output or not absolute_sigma:
-			par = px[:len(p0)]
+			par = px[:len(p0[pfree])]
 			xstar = px[-len(x):]
 			chisq = np.sum(((y - f(xstar, *par)) / dy)**2) + np.sum(((xstar - x) / dx) ** 2)
 		if not absolute_sigma:
 			pxcov *= chisq / (len(y) - len(par))
 		if full_output:
+			px, pxcov = _apply_pfree_par_cov(px, pxcov, np.concatenate((pfree, np.ones(len(x), dtype=bool))), p0)
 			out = FitCurveOutput(px=px, pxcov=pxcov, datax=x, datay=y, chisq=chisq, method=method, rawoutput=output, check=check)
 		else:
+			px, pxcov = _apply_pfree_par_cov(px, pxcov, np.concatenate((pfree, np.ones(len(x), dtype=bool))), p0)
 			out = FitCurveOutput(px=px, pxcov=pxcov, check=check)
 		
 		if print_info >= 1:
@@ -561,19 +609,19 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 	##### EFFECTIVE VARIANCE #####
 	
 	elif method == 'ev':
-		f = model.f()
-		dfdx = model.dfdx()
-		jac = model.dfdp_curve_fit(len(x))
+		f = _apply_pfree(model.f(), pfree, p0)
+		dfdx = _apply_pfree(model.dfdx(), pfree, p0)
+		jac = _apply_pfree(model.dfdp_curve_fit(len(x)), pfree, p0)
 		conv_diff = kw.pop('conv_diff', 1e-7)
 		max_cycles = kw.pop('max_cycles', 5)
 		
 		if dfdx is None:
-			diff_step = kw.get('diff_step', np.finfo('float64').eps * 1024)
+			diff_step = kw.get('diff_step', np.finfo('float64').eps * 65536)
 			def dfdx(x, *p):
 				h = x * diff_step + diff_step
 				return (f(x + h, *p) - f(x, *p)) / h
 		
-		par, cov = optimize.curve_fit(f, x, y, p0=p0, absolute_sigma=absolute_sigma, jac=jac, bounds=bounds, **kw)
+		par, cov = optimize.curve_fit(f, x, y, p0=p0[pfree], absolute_sigma=absolute_sigma, jac=jac, bounds=bounds, **kw)
 		par, cov, cycles = _fit_curve_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, jac=jac, bounds=bounds, **kw)
 		
 		if cycles == -1:
@@ -586,9 +634,11 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 			fact = (y - f(x, *par)) / err2
 			delta_x = fact * deriv * dx**2
 			delta_y = -fact * dy**2
+			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
 			out = FitCurveOutput(par=par, cov=cov, datax=x, datay=y, chisq=chisq, method=method, check=check, delta_x=delta_x, delta_y=delta_y)
 			out.cycles = cycles
 		else:
+			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
 			out = FitCurveOutput(par=par, cov=cov, check=check)
 	
 		if print_info >= 1:
@@ -599,17 +649,19 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 	##### WEIGHTED LEAST SQUARES #####
 	
 	elif method == 'wleastsq':
-		f = model.f()
-		jac = model.dfdp_curve_fit(len(x))
+		f = _apply_pfree(model.f(), pfree, p0)
+		jac = _apply_pfree(model.dfdp_curve_fit(len(x)), pfree, p0)
 		
-		par, cov = optimize.curve_fit(f, x, y, sigma=dy, p0=p0, absolute_sigma=absolute_sigma, jac=jac, bounds=bounds, **kw)
+		par, cov = optimize.curve_fit(f, x, y, sigma=dy, p0=p0[pfree], absolute_sigma=absolute_sigma, jac=jac, bounds=bounds, **kw)
 		
 		if full_output:
 			delta_x = np.zeros(len(x))
 			delta_y = y - f(x, *par)
 			chisq = np.sum((delta_y / dy) ** 2)
+			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
 			out = FitCurveOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y, datax=x, datay=y, method=method, check=check)
 		else:
+			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
 			out = FitCurveOutput(par=par, cov=cov, check=check)
 	
 		if print_info >= 1:
@@ -619,17 +671,19 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 	##### LEAST SQUARES #####
 	
 	elif method == 'leastsq':
-		f = model.f()
-		jac = model.dfdp_curve_fit(len(x))
+		f = _apply_pfree(model.f(), pfree, p0)
+		jac = _apply_pfree(model.dfdp_curve_fit(len(x)), pfree, p0)
 		
-		par, cov = optimize.curve_fit(f, x, y, p0=p0, absolute_sigma=False, jac=jac, bounds=bounds, **kw)
+		par, cov = optimize.curve_fit(f, x, y, p0=p0[pfree], absolute_sigma=False, jac=jac, bounds=bounds, **kw)
 
 		if full_output:
 			delta_x = np.zeros(len(x))
 			delta_y = y - f(x, *par)
 			chisq = np.sum(delta_y ** 2)
+			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
 			out = FitCurveOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y, datax=x, datay=y, method=method, check=check)
 		else:
+			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
 			out = FitCurveOutput(par=par, cov=cov, check=check)
 
 		if print_info >= 1:
@@ -1205,8 +1259,10 @@ def fit_oversampling(data, digit=1, print_info=0, plot_axes=None):
 	cov : 2D array
 		Covariance matrix of the estimate.
 	"""
+	import numdifftools as numdiff
+	
 	if print_info >= 1:
-		print('########################## FIT_OVERSAMPLING ##########################')
+		print('############### fit_oversampling ###############')
 		print()
 	
 	data = np.asarray(data) / digit
@@ -1306,6 +1362,10 @@ def fit_oversampling(data, digit=1, print_info=0, plot_axes=None):
 	if print_info >= 1:
 		print('Estimated mean, standard deviation (with correlation):')
 		print(format_par_cov(par, cov))
+		
+	if print_info >= 1:
+		print()
+		print('############# END fit_oversampling #############')
 		
 	return par, cov
 
