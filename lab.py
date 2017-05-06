@@ -222,10 +222,12 @@ class FitCurveOutput:
 	
 	Parameters
 	----------
-	par, cov, px, pxcov, datax, datay, fitx, fity, chisq, deltax, deltay, method, rawoutput :
+	par, cov, px, pxcov, datax, datay, fitx, fity, chisq, deltax, deltay,
+	method, rawoutput :
 		These parameters coincide with members (see their description).
 	nump : positive integer or None
-		Number of parameters. If px or pxcov are given but not one of datax, deltax, datay, deltay, fity, then nump shall be specified.
+		Number of parameters. If px or pxcov are given but not one of datax,
+		deltax, datay, deltay, fity, then nump shall be specified.
 	check : bool
 		If True, perform some consistency checks.
 	
@@ -236,7 +238,8 @@ class FitCurveOutput:
 	cov : 2D array
 		Covariance matrix of the estimate.
 	px : 1D array
-		Estimate of parameters, including x (for fits with uncertainties along x). The format is:
+		Estimate of parameters, including x (for fits with uncertainties
+		along x). The format is:
 		[p0, ..., pn, x1, ..., xm]
 	pxcov : 2D array
 		Covariance matrix of px.
@@ -253,15 +256,20 @@ class FitCurveOutput:
 	deltay : 1D array
 		fity - datay
 	chisq : non-negative number
-		A chisquare statistics, that is a statistics (i.e. function of data) that has a chisquare distribution under the assumption that the model is true.
+		A chisquare statistics, that is a statistics (i.e. function of
+		data) that has a chisquare distribution under the assumption that
+		the model is true.
 	chisq_dof : positive integer
 		Degrees of freedom of chisq.
 	chisq_pvalue : non-negative number
-		Survival function at chisq, i.e. integral of the chisquare distribution with chisq_dof degrees of freedom from chisq to infinity.
+		Survival function at chisq, i.e. integral of the chisquare
+		distribution with chisq_dof degrees of freedom from chisq to
+		infinity.
 	method : string
 		Fitting algorithm used to generate this result, see fit_curve.
 	rawoutput : object
-		Object returned by fitting function of lower level than fit_curve, if any (tipically a minimizer), see fit_curve.
+		Object returned by fitting function of lower level than fit_curve,
+		if any (tipically a minimizer), see fit_curve.
 	"""
 	
 	def __init__(self, par=None, cov=None, px=None, pxcov=None, nump=None, datax=None, datay=None, fitx=None, fity=None, deltax=None, deltay=None, chisq=None, method=None, rawoutput=None, check=True):
@@ -352,15 +360,25 @@ class CurveModel:
 	Parameters
 	----------
 	f : function
-		A function with signature f(x, *par). Returns the y coordinates corresponding to the x coordinates given in the array x for a curve parametrized by the arguments *par.
+		A function with signature f(x, *par). Returns the y coordinates
+		corresponding to the x coordinates given in the array x for a curve
+		parametrized by the arguments *par.
 	symb : bool
-		If True, derivatives of f respect to x and *par are obtained as needed with sympy. In this case, f must accept sympy variables as arguments.
+		If True, derivatives of f respect to x and *par are obtained as
+		needed with sympy. In this case, f must accept sympy variables as
+		arguments.
 	dfdx : function, optional
-		A function with the same signature as f. Returns the derivative of f respect to x.
+		A function with the same signature as f. Returns the derivative of
+		f respect to x.
 	dfdp : function, optional
-		A function with the same signature as f. Returns the derivatives of f respect to *par, in the form of a 2D array where the first index runs along the datapoints and the second along the parameters.
+		A function with the same signature as f. Returns the derivatives of
+		f respect to *par, in the form of a 2D array where the first index
+		runs along the datapoints and the second along the parameters.
 	dfdpdx : function, optional
-		A function with the same signature as f. Returns the cross derivatives of f respect to x and *par, in the form of a 2D array where the first index runs along the datapoints and the second along the parameters.
+		A function with the same signature as f. Returns the cross
+		derivatives of f respect to x and *par, in the form of a 2D array
+		where the first index runs along the datapoints and the second
+		along the parameters.
 	
 	Methods
 	-------
@@ -403,6 +421,12 @@ class CurveModel:
 		return self._repr
 	
 	def latex(self):
+		"""
+		Returns
+		-------
+		s : string
+			LaTeX representation of the object.
+		"""
 		if self._symb:
 			args = inspect.getargspec(self._f_sym).args
 			xsym = sympy.symbols('x', real=True)
@@ -413,10 +437,31 @@ class CurveModel:
 			return '\\mathtt{%s}' % format(self._f)
 		
 	def f(self):
-		"""return function"""
+		"""
+		Returns
+		-------
+		f : function
+			Model function. If the object was initialized with symb=False,
+			it is the f given at initialization; if symb=True, it is a
+			"numpyfication" of the symbolic function.
+		"""
 		return self._f
 
 	def f_odrpack(self, length):
+		"""
+		Wraps the model function to use the format of scipy.odr.
+		
+		Parameters
+		----------
+		length : positive integer
+			Number of datapoints the function will be used with.
+		
+		Returns
+		-------
+		fcn : function
+			Model function with signature fcn(B, x), where B corresponds to
+			*par.
+		"""
 		rt = np.empty(length)
 		def f_p(B, x):
 			rt[:] = self._f(x, *B)
@@ -424,11 +469,30 @@ class CurveModel:
 		return f_p
 
 	def dfdx(self):
-		"""return dfdx function"""
+		"""
+		Returns
+		-------
+		dfdx : function
+			Derivative of model function respect to x.
+		"""
 		return self._dfdx
 
 	def dfdx_odrpack(self, length):
-		"""return dfdx function with return format of scipy.odr's jacd"""
+		"""
+		Wraps the derivative of model function respect to x to use the
+		format of scipy.odr.
+		
+		Parameters
+		----------
+		length : positive integer
+			Number of datapoints the function will be used with.
+		
+		Returns
+		-------
+		jacd : function
+			Derivative of model function respect to x with signature
+			jacd(B, x), where B corresponds to *par.
+		"""
 		if self._dfdx is None:
 			return None
 		else:
@@ -439,10 +503,33 @@ class CurveModel:
 			return f_p
 
 	def dfdps(self):
-		"""return list of dfdp functions, one for each parameter"""
+		"""
+		Returns
+		-------
+		dfdps : list of functions or None
+			List of derivatives of model function respect to parameters. It
+			is available only if the object was initialized with symb=True.
+		"""
 		return self._dfdps
 	
 	def dfdp(self, length=None):
+		"""
+		Returns derivative of model function respect to parameters.
+		
+		Parameters
+		----------
+		length : positive integer or None
+			Number of datapoints the function will be used with. If the
+			model was initialized with symb=False it is not necessary.
+		
+		Returns
+		-------
+		dfdp : function or None
+			Derivative of model function respect to parameters. Returns a
+			2D array where the first index runs along the datapoints and
+			the second along the parameters. If symb=False and dfdp was not
+			given at initialization, it is None.
+		"""
 		if self._symb:
 			rt = np.empty((length, len(self._dfdps)))
 			def f_p(*args):
@@ -454,7 +541,25 @@ class CurveModel:
 			return self._dfdp
 
 	def dfdp_odrpack(self, length=None):
-		"""return dfdp function with return format of scipy.odr's jacb"""
+		"""
+		Wraps the derivative of model function respect to parameters to use
+		the format of scipy.odr.
+		
+		Parameters
+		----------
+		length : positive integer or None
+			Number of datapoints the function will be used with. If the
+			model was initialized with symb=False it is not necessary.
+		
+		Returns
+		-------
+		jacb : function
+			Derivative of model function respect to parameters, with
+			signature jacb(B, x), where B corresponds to *par. Returns a 2D
+			array where the first index runs along the parameters and the
+			second along the datapoints. If symb=False and dfdp was not
+			given at initialization, it is None.
+		"""
 		if self._symb:
 			rt = np.empty((len(self._dfdps), length))
 			def f_p(B, x):
@@ -470,6 +575,24 @@ class CurveModel:
 			return None
 
 	def dfdp_curve_fit(self, length=None):
+		"""
+		Wraps the derivative of model function respect to parameters to use
+		the format of scipy.optimize.curve_fit.
+		
+		Parameters
+		----------
+		length : positive integer or None
+			Number of datapoints the function will be used with. If the
+			model was initialized with symb=False it is not necessary.
+		
+		Returns
+		-------
+		jacb : function
+			Derivative of model function respect to parameters. Returns a
+			2D array where the first index runs along the datapoints and
+			the second along the parameters. If symb=False and dfdp was not
+			given at initialization, it is None.
+		"""
 		if self._symb:
 			rt = np.empty((len(self._dfdps), length))
 			def f_p(*args):
@@ -481,9 +604,34 @@ class CurveModel:
 			return self._dfdp
 
 	def dfdpdxs(self):
+		"""
+		Returns
+		-------
+		dfdpdxs : list of functions or None
+			List of derivatives of model function respect to x and
+			parameters. It is available only if the object was initialized
+			with symb=True.
+		"""
 		return self._dfdpdxs
 	
 	def dfdpdx(self, length=None):
+		"""
+		Returns derivative of model function respect to x and parameters.
+		
+		Parameters
+		----------
+		length : positive integer or None
+			Number of datapoints the function will be used with. If the
+			model was initialized with symb=False it is not necessary.
+		
+		Returns
+		-------
+		dfdp : function or None
+			Derivative of model function respect to parameters. Returns a
+			2D array where the first index runs along the datapoints and
+			the second along the parameters. If symb=False and dfdpdx was
+			not given at initialization, it is None.
+		"""
 		if self._symb:
 			rt = np.empty((length, len(self._dfdpdxs)))
 			def f_p(*args):
@@ -515,8 +663,130 @@ def _apply_pfree_par_cov(par, cov, pfree, p0):
 	else:
 		return par, cov
 
-def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolute_sigma=True, method='auto', full_output=True, check=True, print_info=0, **kw):
-	"""f may be either callable or CurveModel"""
+def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolute_sigma=True, method='auto', print_info=0, full_output=True, check=True, **kw):
+	"""
+	Fit a curve in the form:
+	y = f(x, *par)
+	finding a "best estimate" for *par.
+	
+	Parameters
+	----------
+	f : callable or CurveModel
+		If callable: a function with signature f(x, *par), which is used to
+		initialize a CurveModel. If CurveModel: it is used directly. See
+		CurveModel for details.
+	x : 1D array
+		x data.
+	y : 1D array
+		y data.
+	dx : 1D array or None
+		Uncertainties of x data.
+	dy : 1D array or None
+		Uncertainties of y data.
+	p0 : 1D array
+		Initial estimate of *par. Must be specified.
+	pfix : None or 1D array either of integers or bools
+		Specify which parameters to held fixed to the initial value given
+		in p0. If None: all parameters free; if array of integers: the
+		integers specify indexes of parameters to fix; if array of bools:
+		must have the same shape as *par, a True will mean the
+		corresponding parameter is fixed, a False that it is free. Returned
+		uncertainties on fixed parameters will be zero.
+	bounds : None or 2D array
+		Specify bounds inside which parameters are to be searched, in the
+		form:
+		[[min p0, min p1, ...], [max p0, max p1, ...]]
+		+-infinity can be used. None means +-infinity for all parameters.
+	absolute_sigma : bool
+		If False, multiply estimate of covariance matrix of estimate of
+		*par by a factor such that it is as if the uncertainties dx and/or
+		dy where scaled by a common factor to get a chisquare statistics
+		matching its degrees of freedom.
+	method : string, one of 'auto', 'odrpack', 'linodr', 'ml', 'wleastsq',
+	'leastsq', 'ev'
+		Fitting algorithm to use. If 'auto', choose automatically. See
+		below for a description of each algorithm.
+	print_info : integer
+		Regulate diagnostics printed by the function. If less than or equal
+		to 0, print nothing. Positive values mean an increasing amount of
+		information; you can safely pass huge values to set the maximum
+		level possible.
+	full_output : bool
+		If False, return less information.
+	check : bool
+		If False, avoid some consistency checks.
+	
+	Keyword arguments
+	-----------------
+	Keyword arguments are passed to the lower-level fitting routine, which
+		depends on the method used. See description of methods below.
+	
+	Fitting methods
+	---------------
+	All the methods perform a maximum-likelihood fit assuming normal (i.e.
+	gaussian) uncertainties.
+	'auto' :
+		Choose automatically an appropriate method, based on the values of
+		dx, dy, bounds given.
+	'odrpack' :
+		Use ODRPACK through the wrapper scipy.odr. It supports
+		uncertainties on both x and y or only on y, and is stable and fast,
+		but it does not compute an estimate of the covariance between
+		datapoints and parameters in the first case. Bounds are not
+		supported. Keyword arguments are passed to scipy.odr.ODR.
+	'linodr' :
+		Simplifies the computation using a formula that is exact only if
+		the model is a straight line; it will be reasonable if at each
+		datapoint the radius of curvature is greater enough than the
+		uncertainties. the approximation works better if greater
+		uncertainties are on y (greater uncertainty on y means that at a
+		datapoint the ratio dy/dx is greater than the derivative of the
+		curve). It supports uncertainties on at least one of x and y.
+		Individual uncertainties may be zero, provided on each datapoint at
+		least one of dx and dy is not None or zero. It may become unstable
+		if the given CurveModel does not provide a dfdx, case in which a
+		single step forward derivative estimation is used. The step can be
+		specified with the keyword argument 'diff_step'. Keyword arguments
+		(including 'diff_step') are passed to scipy.optimize.least_squares.
+	'ml' :
+		Supports uncertainties only on both x and y and provides an
+		estimate of the covariance between datapoints and parameters.
+		Keyword arguments are passed to scipy.optimize.least_squares.
+	'leastsq' :
+		Ignore given uncertainties, put unitary uncertainties on y and
+		apply absolute_sigma=False independently of the value given.
+		Keyword arguments are passed to scipy.optimize.curve_fit.
+	'wleastsq' :
+		Supports no uncertainties or only on y. In the first case behave as
+		'leastsq', but do not impose absolute_sigma. Keyword arguments are
+		passed to scipy.optimize.curve_fit.
+	'ev' :
+		Supports uncertainties on x and y or only on y. Works well under
+		the same assumptions of linodr, but tipically worse; the same
+		considerations on dfdx apply. The algorithm is to repeat the
+		procedure of 'wleastsq' many times, using the estimated parameters
+		at an iteration to propagate the uncertainties on x to
+		uncertainties on y for the next iteration. The keyword argument
+		'max_cycles' set a limit on the number of iterations; an exception
+		is raised if the limit is surpassed; 'conv_diff' set the relative
+		difference between successive estimates (both values and
+		covariance) that stops the cycle; 'diff_step' is used as in
+		'linodr'. Other keyword arguments are passed to
+		scipy.optimize.curve_fit. The output object has a member 'cycles'
+		which is the number of cycles done.
+	
+	Returns
+	-------
+	out : FitCurveOutput
+		Object containing at least the members par and cov, which are the
+		estimate of *par and its estimated covariance matrix. If
+		full_output=False, these may be the sole members. See
+		FitCurveOutput for details.
+	
+	See also
+	--------
+	scipy.optimize.curve_fit
+	"""
 	
 	if print_info >= 1:
 		print('################ fit_curve ################')
@@ -603,7 +873,10 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 		if not absolute_sigma:
 			cov *= chisq / (len(x) - len(par))
 		if full_output:
-			out = FitCurveOutput(par=par, cov=cov, chisq=chisq, deltax=output.delta, deltay=output.eps, datax=x, datay=y, fitx=output.xplus, fity=output.y, rawoutput=output, method=method, check=False)
+			if dx is None:
+				out = FitCurveOutput(par=par, cov=cov, chisq=chisq, deltay=output.eps, datax=x, datay=y, fity=output.y, rawoutput=output, method=method, check=False)
+			else:
+				out = FitCurveOutput(par=par, cov=cov, chisq=chisq, deltax=output.delta, deltay=output.eps, datax=x, datay=y, fitx=output.xplus, fity=output.y, rawoutput=output, method=method, check=False)
 			# (!) check=False because ODRPACK may return slightly inconsistent fity, deltay; the problem is in ODRPACK itself, not in the wrapper. Anyway, inconsistencies are reasonable, so we just look away.
 		else:
 			out = FitCurveOutput(par=par, cov=cov, check=check)
@@ -817,6 +1090,79 @@ class FitCurveBootstrapOutput:
 		pass
 
 def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method='auto', plot=dict(), eta=False, **kw):
+	"""
+	Perform a bootstrap, i.e. given a curve model and datapoints with
+	uncertainties, generates random displacement to the data with normal
+	distribution and standard deviations equal to the uncertainties many
+	times, and each time fit the randomly displaced data. Results from fits
+	are averaged and optionally graphicated as histograms and scatter
+	plots. This is tipically used to verify if the fit works well.
+	
+	The average is a weighted average, weights are inverses of the
+	covariance matrices estimated by the fit.
+	
+	The arguments are not a single set of uncertainties and parameters:
+	dxs, dys and p0s are arrays of arrays and the bootstrap will be
+	repeated for each possible combination. This is because this function
+	was originally written to study how the fit behaves augmenting
+	uncertainties on x and to verify simmetries of parameters; a plot of
+	results vs. parameter value or average uncertainty on x or y can be
+	generated.
+	
+	Parameters
+	----------
+	f : callable of CurveModel
+		As the first argument of fit_curve.
+	xmean : 1D array
+		Central x data. Central y data will be generated with f(xmean,
+		*par).
+	dxs : 2D array
+		Uncertainties on x. The second index runs along datapoints, the
+		first along "datasets".
+	dys : 2D array
+		Uncertainties on y. The second index runs along datapoints, the
+		first along datasets. The bootstrap will be repeated for all
+		combinations of datasets in dxs and dys.
+	p0s : list of arrays
+		Values of parameters, in the format:
+		[[values for p0], [values for p1], ...]
+		The bootstrap will be repeated for all combinations of parameters
+		values.
+	mcn : positive integer
+		"Monte Carlo number": the number of times the fit will be repeated
+		for each combination of datasets and parameters.
+	method : string
+		Fitting method; see fit_curve.
+	plot : dictionary
+		Argument regulating which plots to draw. The keywords read from the
+		dictionary are 'single', 'vsp0', 'vsds', which shall be bools and
+		respectively mean: draw a summary plot for each bootstrap; draw a
+		plot of results vs. parameter value; draw a plot of results vs.
+		uncertainties.
+	eta : bool
+		If True, every 5 seconds print an estimate of the remaining time.
+	
+	Keyword arguments
+	-----------------
+	Keyword arguments are passed to fit_curve.
+	
+	Returns
+	-------
+	out : object
+		An object with the following members defined:
+		fp : array with shape (len(dxs), len(dys), len(p0s[0]),
+		len(p0s[1]), ..., len(p0s))
+		cp : array with shape (len(dxs), len(dys), len(p0s[0]),
+		len(p0s[1]), ..., len(p0s), len(p0s))
+			Weighted average of fits results for each bootstrap. fp
+			contains the estimated values and cp the estimated covariance
+			matrices.
+		plotout : dictionary
+			Dictionary with the same keywords as those read from the plot
+			argument; 'single' contains a list of matplotlib figures, one
+			for each bootstrap; 'vsp0' and 'vsds' contain a matplotlib
+			figure each. Figures have meaningful titles.
+	"""
 
 	n = len(xmean) # number of points
 	
@@ -1318,21 +1664,21 @@ def fit_linear(x, y, dx=None, dy=None, offset=True, absolute_sigma=True, method=
 
 def fit_const_yerr(y, sigmay):
 	"""
-		fit y = a
+	fit y = a
 
-		Parameters
-		----------
-		y : M-length array
-			dependent data
-		sigmay : M-length array
-			standard deviation of y
+	Parameters
+	----------
+	y : M-length array
+		dependent data
+	sigmay : M-length array
+		standard deviation of y
 
-		Returns
-		-------
-		a : float
-			optimal value for a
-		vara : float
-			variance of a
+	Returns
+	-------
+	a : float
+		optimal value for a
+	vara : float
+		variance of a
 	"""
 	y = np.asarray(y)
 	sigmay = np.asarray(sigmay)
@@ -1643,6 +1989,13 @@ _util_mm_esr_data = dict(
 )
 
 def util_mm_list():
+	"""
+	Returns
+	-------
+	l : list
+		List of tuples, one for each metertype understood by util_mm_er, containing:
+		(metertype, type, description)
+	"""
 	l = []
 	for meter in _util_mm_esr_data:
 		l += [(meter, _util_mm_esr_data[meter]['type'], _util_mm_esr_data[meter]['desc'])]
@@ -2076,8 +2429,8 @@ def format_par_cov(par, cov):
 	
 	Examples
 	--------
-	>>> par, cov = curve_fit(f, x, y)
-	>>> print(lab.format_par_cov(par, cov))
+	>>> out = fit_curve(f, x, y, ...)
+	>>> print(format_par_cov(out.par, out.cov))
 	"""
 	pars = xe(par, np.sqrt(np.diag(cov)))
 	corr = fit_norm_cov(cov) * 100
@@ -2260,9 +2613,9 @@ def sanitizefilename(name, windows=True):
 	filename : string
 		The sanitized file name.
 	"""
-	name = name.replace('/', '∕').replace('\0', '')
+	name = name.replace('/', '∕').replace('\0', '').replace(':', '﹕')
 	if windows:
-		name = name.replace('\\', '⧵').replace(':', '﹕')
+		name = name.replace('\\', '⧵')
 	return name
 
 def nextfilename(base, ext, idxfmt='%02d', prepath=None, start=1, sanitize=True):
