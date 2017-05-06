@@ -47,7 +47,7 @@ __all__ = [ # things imported when you do "from lab import *"
 #	'etastr'
 # ]
 
-__version__ = '2016.11'
+__version__ = '2017.05'
 
 # ************************** FIT ***************************
 
