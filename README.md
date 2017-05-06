@@ -1,12 +1,18 @@
 # lab.py
 
-Piccolo modulo con funzioni python per il laboratorio di fisica:
+Python module with utilities written during undergraduate physics laboratory courses at University of Pisa.
 
-* fit
-* formattazione numeri con incertezze
-* calcolo errore dei multimetri
+### Functionality
+* curve fitting
+* digitized sample fitting
+* uncertainty formatting
+* automatic computing of multimeter uncertainties
 
-Requisiti: **scipy**, sympy, uncertainties
-Requisiti opzionali (servono per alcune funzioni): numdifftools, matplotlib
+### Requirements
+Requirements: **scipy**, sympy, uncertainties.
 
-**NON TESTATO SU PYTHON 2**
+Optional requirements (needed by some functions): numdifftools, matplotlib.
+
+The modules uncertainties and numdifftools require only numpy and no compilation.
+
+**NOT TESTED ON PYTHON 2**, but should work.
