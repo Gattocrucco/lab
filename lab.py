@@ -150,7 +150,7 @@ def _fit_curve_odr(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, dfd
 	def fun(p):
 		return (y - f(x, *p)) / np.sqrt(dy2 + dfdx(x, *p)**2 * dx2)
 	if not ((dfdps is None or dfdpdxs is None) and (dfdp is None or dfdpdx is None)):
-		rt = np.empty((len(x), len(p0)))
+		rt = np.empty((len(y), len(p0)))
 		def jac(p):
 			sdfdx = dfdx(x, *p)
 			rad = dy2 + sdfdx**2 * dx2
@@ -212,86 +212,171 @@ def _fit_curve_ml(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdp=None, bounds=
 	cov = np.dot(VT.T / s**2, VT)
 	return par, cov, result
 
+def _asarray(a):
+	A = np.asarray(a)
+	return a if len(A.shape) == 0 else A
+
 class FitCurveOutput:
+	"""
+	Object that holds the output of fit_curve.
 	
-	def __init__(self, par=None, cov=None, px=None, pxcov=None, nump=None, datax=None, datay=None, fitx=None, fity=None, chisq=None, delta_x=None, delta_y=None, method=None, rawoutput=None, check=True):
+	Parameters
+	----------
+	par, cov, px, pxcov, datax, datay, fitx, fity, chisq, deltax, deltay, method, rawoutput :
+		These parameters coincide with members (see their description).
+	nump : positive integer or None
+		Number of parameters. If px or pxcov are given but not one of datax, deltax, datay, deltay, fity, then nump shall be specified.
+	check : bool
+		If True, perform some consistency checks.
+	
+	Members
+	-------
+	par : 1D array
+		Estimate of the parameters.
+	cov : 2D array
+		Covariance matrix of the estimate.
+	px : 1D array
+		Estimate of parameters, including x (for fits with uncertainties along x). The format is:
+		[p0, ..., pn, x1, ..., xm]
+	pxcov : 2D array
+		Covariance matrix of px.
+	datax :
+		x data. For fits with uncertainties along x, it is a 1D array.
+	datay : 1D array
+		y data.
+	fitx : 1D array
+		Fitted xs (for fits with uncertainties along x).
+	fity : 1D array
+		Fitted ys, i.e. model_function(fitted x, fitted parameters).
+	deltax : 1D array
+		fitx - datax
+	deltay : 1D array
+		fity - datay
+	chisq : non-negative number
+		A chisquare statistics, that is a statistics (i.e. function of data) that has a chisquare distribution under the assumption that the model is true.
+	chisq_dof : positive integer
+		Degrees of freedom of chisq.
+	chisq_pvalue : non-negative number
+		Survival function at chisq, i.e. integral of the chisquare distribution with chisq_dof degrees of freedom from chisq to infinity.
+	method : string
+		Fitting algorithm used to generate this result, see fit_curve.
+	rawoutput : object
+		Object returned by fitting function of lower level than fit_curve, if any (tipically a minimizer), see fit_curve.
+	"""
+	
+	def __init__(self, par=None, cov=None, px=None, pxcov=None, nump=None, datax=None, datay=None, fitx=None, fity=None, deltax=None, deltay=None, chisq=None, method=None, rawoutput=None, check=True):
+		if not (px is None and pxcov is None):
+			A = np.array([datax, deltax, datay, deltay, fity], dtype=object)
+			Anone = np.array([a is None for a in A], dtype=bool)
+			if nump is None and not all(Anone):
+				nump = -len(A[~Anone][0])
+			else:
+				raise ValueError("You should specify nump")
+		
 		if not (px is None):
-			self.px = px
-			if nump is None:
-				nump = -len(datax)
-			self.par = px[:nump]
-			self.fitx = px[nump:]
+			self.px = np.asarray(px)
+			self.par = self.px[:nump]
+			self.fitx = self.px[nump:]
 			if check:
 				assert par is None
 				assert fitx is None
 		else:
-			self.par = par
-			self.fitx = fitx
+			self.par = _asarray(par)
+			self.fitx = _asarray(fitx)
 			
 		if not (pxcov is None):
-			self.pxcov = pxcov
-			if nump is None:
-				nump = -len(datax)
-			self.cov = pxcov[:nump,:nump]
+			self.pxcov = np.asarray(pxcov)
+			self.cov = self.pxcov[:nump,:nump]
 			if check:
 				assert cov is None
 		else:
-			self.cov = cov
+			self.cov = _asarray(cov)
 		
 		if hasattr(self, 'px') and hasattr(self, 'pxcov'):
 			self.upx = uncertainties.correlated_values(self.px, self.pxcov)
 		if not (self.par is None) and not (self.cov is None):
 			self.upar = uncertainties.correlated_values(self.par, self.cov)
 		
-		if delta_x is None and not (datax is None) and not (self.fitx is None):
-			self.delta_x = self.fitx - datax
-			self.datax = datax
-		elif not (delta_x is None) and datax is None and not (self.fitx is None):
-			self.datax = self.fitx - delta_x
-			self.delta_x = delta_x
-		elif not (delta_x is None) and not (datax is None) and self.fitx is None:
-			self.fitx = datax + delta_x
-			self.datax = datax
-			self.delta_x = delta_x
+		if deltax is None and not (datax is None) and not (self.fitx is None):
+			self.datax = np.asarray(datax)
+			self.deltax = self.fitx - self.datax
+		elif not (deltax is None) and datax is None and not (self.fitx is None):
+			self.deltax = np.asarray(deltax)
+			self.datax = self.fitx - self.deltax
+		elif not (deltax is None) and not (datax is None) and self.fitx is None:
+			self.datax = np.asarray(datax)
+			self.deltax = np.asarray(deltax)
+			self.fitx = self.datax + self.deltax
 		else:
-			self.datax = datax
-			self.delta_x = delta_x
-		if check and np.sum([a is None for a in [self.fitx, self.datax, self.delta_x]]) == 0:
-			assert np.allclose(self.fitx, self.datax + self.delta_x)
+			self.datax = _asarray(datax)
+			self.deltax = _asarray(deltax)
+		if check and np.sum([a is None for a in [self.fitx, self.datax, self.deltax]]) == 0:
+			assert np.allclose(self.fitx, self.datax + self.deltax)
 			
-		if delta_y is None and not (datay is None) and not (fity is None):
-			self.delta_y = fity - datay
-			self.datay = datay
-			self.fity = fity
-		elif not (delta_y is None) and datay is None and not (fity is None):
-			self.datay = self.fity - delta_y
-			self.delta_y = delta_y
-			self.fity = fity
-		elif not (delta_y is None) and not (datay is None) and fity is None:
-			self.fity = datay + delta_y
-			self.datay = datay
-			self.delta_y = delta_y
+		if deltay is None and not (datay is None) and not (fity is None):
+			self.datay = np.asarray(datay)
+			self.fity = np.asarray(fity)
+			self.deltay = self.fity - self.datay
+		elif not (deltay is None) and datay is None and not (fity is None):
+			self.deltay = np.asarray(deltay)
+			self.fity = np.asarray(fity)
+			self.datay = self.fity - self.deltay
+		elif not (deltay is None) and not (datay is None) and fity is None:
+			self.datay = np.asarray(datay)
+			self.deltay = np.asarray(deltay)
+			self.fity = self.datay + self.deltay
 		else:
-			self.datay = datay
-			self.delta_y = delta_y
-			self.fity = fity
-		if check and np.sum([a is None for a in [self.fity, self.datay, self.delta_y]]) == 0:
-			assert np.allclose(self.fity, self.datay + self.delta_y)
+			self.datay = _asarray(datay)
+			self.deltay = _asarray(deltay)
+			self.fity = _asarray(fity)
+		if check and np.sum([a is None for a in [self.fity, self.datay, self.deltay]]) == 0:
+			assert np.allclose(self.fity, self.datay + self.deltay)
 		
 		self.chisq = chisq
 		if not (chisq is None):
-			self.chisq_dof = len(self.delta_x) - len(self.par)
-			self.chisq_pvalue = stats.chi2.sf(self.chisq, self.chisq_dof)
+			A = np.array([self.datax, self.fitx, self.deltax, self.datay, self.fity, self.deltay], dtype=object)
+			Alen = np.array([hasattr(a, '__len__') for a in A], dtype=bool)
+			if any(Alen) and not (self.par is None):
+				self.chisq_dof = len(A[Alen][0]) - len(self.par)
+				self.chisq_pvalue = stats.chi2.sf(self.chisq, self.chisq_dof)
 		
 		self.rawoutput = rawoutput
 		
 		self.method = method
 
 class CurveModel:
+	"""
+	Object to specify a curve model for fit_curve, in the form:
+	y = f(x, *par).
+	
+	Parameters
+	----------
+	f : function
+		A function with signature f(x, *par). Returns the y coordinates corresponding to the x coordinates given in the array x for a curve parametrized by the arguments *par.
+	symb : bool
+		If True, derivatives of f respect to x and *par are obtained as needed with sympy. In this case, f must accept sympy variables as arguments.
+	dfdx : function, optional
+		A function with the same signature as f. Returns the derivative of f respect to x.
+	dfdp : function, optional
+		A function with the same signature as f. Returns the derivatives of f respect to *par, in the form of a 2D array where the first index runs along the datapoints and the second along the parameters.
+	dfdpdx : function, optional
+		A function with the same signature as f. Returns the cross derivatives of f respect to x and *par, in the form of a 2D array where the first index runs along the datapoints and the second along the parameters.
+	
+	Methods
+	-------
+	latex
+	f
+	f_odrpack
+	dfdx
+	dfdx_odrpack
+	dfdps
+	dfdp
+	dfdp_odrpack
+	dfdp_curve_fit
+	dfdpdx
+	"""
 
 	def __init__(self, f, symb=False, dfdx=None, dfdp=None, dfdpdx=None):
-		"""if symb=True, use sympy to obtain derivatives from f
-		or f is a scipy.odr.Model or a CurveModel to copy"""
 		if symb:
 			args = inspect.getargspec(f).args
 			xsym = sympy.symbols('x', real=True)
@@ -450,6 +535,8 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 			print('Model created from f: {}'.format(model))
 			print()
 	
+	if p0 is None:
+		raise ValueError("p0 must be specified")
 	p0 = np.atleast_1d(p0)
 	if not (pfix is None):
 		pfix = np.asarray(pfix)
@@ -471,8 +558,12 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 	if method == 'auto':
 		if (dy is None) and not (dx is None):
 			method = 'linodr' # only linodr supports errors only along x
+		elif dy is None:
+			method = 'leastsq'
 		elif bounds is None or (all(bounds[0] == -np.inf) and all(bounds[1] == np.inf)):
 			method = 'odrpack' # generally good method but does not support bounds
+		elif dx is None:
+			method = 'wleastsq'
 		else:
 			method = 'ml' # much slower than odrpack and linodr, but supports bounds and is more correct than linodr
 		if print_info >= 1:
@@ -504,16 +595,16 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 		
 		if full_output or not absolute_sigma:
 			if not (dx is None) and not (dy is None):
-				chisq = np.sum((output.eps / dy)**2 + (output.delta / dx)**2)
+				chisq = np.sum((output.eps / np.asarray(dy))**2 + (output.delta / np.asarray(dx))**2)
 			elif dx is None and not (dy is None):
-				chisq = np.sum((output.eps / dy)**2)
+				chisq = np.sum((output.eps / np.asarray(dy))**2)
 			elif dx is None and dy is None:
 				chisq = np.sum(output.eps ** 2)
 		if not absolute_sigma:
 			cov *= chisq / (len(x) - len(par))
 		if full_output:
-			out = FitCurveOutput(par=par, cov=cov, chisq=chisq, delta_x=output.delta, delta_y=output.eps, datax=x, datay=y, fitx=output.xplus, fity=output.y, rawoutput=output, method=method, check=False)
-			# (!) check=False because ODRPACK may return slightly inconsistent fity, delta_y; the problem is in ODRPACK itself, not in the wrapper. Anyway, inconsistencies are reasonable, so we just look away.
+			out = FitCurveOutput(par=par, cov=cov, chisq=chisq, deltax=output.delta, deltay=output.eps, datax=x, datay=y, fitx=output.xplus, fity=output.y, rawoutput=output, method=method, check=False)
+			# (!) check=False because ODRPACK may return slightly inconsistent fity, deltay; the problem is in ODRPACK itself, not in the wrapper. Anyway, inconsistencies are reasonable, so we just look away.
 		else:
 			out = FitCurveOutput(par=par, cov=cov, check=check)
 		if print_info >= 1:
@@ -540,6 +631,10 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 				h = x * diff_step + diff_step
 				return (f(x + h, *p) - f(x, *p)) / h
 		
+		x = _asarray(x)
+		y = np.asarray(y)
+		dx = _asarray(dx)
+		dy = _asarray(dy)
 		if dx is None:
 			dx = 0
 		if dy is None:
@@ -557,10 +652,10 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 			cov *= chisq / (len(x) - len(par))
 		if full_output:
 			fact = (y - f(x, *par)) / err2
-			delta_x = fact * deriv * dx**2
-			delta_y = -fact * dy**2
+			deltax = fact * deriv * dx**2
+			deltay = -fact * dy**2
 			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
-			out = FitCurveOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y, datax=x, datay=y, method=method, rawoutput=output, check=check)
+			out = FitCurveOutput(par=par, cov=cov, chisq=chisq, deltax=deltax, deltay=deltay, datax=x, datay=y, method=method, rawoutput=output, check=check)
 		else:
 			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
 			out = FitCurveOutput(par=par, cov=cov, check=check)
@@ -581,6 +676,11 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 		dfdps = _apply_pfree(model.dfdps(), pfree, p0)
 		dfdp = _apply_pfree(model.dfdp(len(x)), pfree, p0)
 		
+		x = np.asarray(x)
+		y = np.asarray(y)
+		dx = np.asarray(dx)
+		dy = np.asarray(dy)
+		
 		verbosity = max(0, min(print_info - 1, 2))
 		
 		px, pxcov, output = _fit_curve_ml(f, x, y, dx, dy, p0[pfree], dfdx=dfdx, dfdps=dfdps, dfdp=dfdp, verbose=verbosity, bounds=bounds, **kw)
@@ -596,7 +696,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 			out = FitCurveOutput(px=px, pxcov=pxcov, datax=x, datay=y, chisq=chisq, method=method, rawoutput=output, check=check)
 		else:
 			px, pxcov = _apply_pfree_par_cov(px, pxcov, np.concatenate((pfree, np.ones(len(x), dtype=bool))), p0)
-			out = FitCurveOutput(px=px, pxcov=pxcov, check=check)
+			out = FitCurveOutput(px=px, pxcov=pxcov, nump=len(p0), check=check)
 		
 		if print_info >= 1:
 			if print_info > 1:
@@ -621,6 +721,13 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 				h = x * diff_step + diff_step
 				return (f(x + h, *p) - f(x, *p)) / h
 		
+		x = _asarray(x)
+		y = np.asarray(y)
+		dx = _asarray(dx)
+		dy = np.asarray(dy)
+		if dx is None:
+			dx = 0
+		
 		par, cov = optimize.curve_fit(f, x, y, p0=p0[pfree], absolute_sigma=absolute_sigma, jac=jac, bounds=bounds, **kw)
 		par, cov, cycles = _fit_curve_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, jac=jac, bounds=bounds, **kw)
 		
@@ -632,10 +739,10 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 			err2 = dy ** 2   +   deriv ** 2  *  dx ** 2
 			chisq = np.sum((y - f(x, *par))**2 / err2)
 			fact = (y - f(x, *par)) / err2
-			delta_x = fact * deriv * dx**2
-			delta_y = -fact * dy**2
+			deltax = fact * deriv * dx**2
+			deltay = -fact * dy**2
 			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
-			out = FitCurveOutput(par=par, cov=cov, datax=x, datay=y, chisq=chisq, method=method, check=check, delta_x=delta_x, delta_y=delta_y)
+			out = FitCurveOutput(par=par, cov=cov, datax=x, datay=y, chisq=chisq, method=method, check=check, deltax=deltax, deltay=deltay)
 			out.cycles = cycles
 		else:
 			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
@@ -655,11 +762,13 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 		par, cov = optimize.curve_fit(f, x, y, sigma=dy, p0=p0[pfree], absolute_sigma=absolute_sigma, jac=jac, bounds=bounds, **kw)
 		
 		if full_output:
-			delta_x = np.zeros(len(x))
-			delta_y = y - f(x, *par)
-			chisq = np.sum((delta_y / dy) ** 2)
+			x = _asarray(x)
+			y = np.asarray(y)
+			dy = np.asarray(dy)
+			deltay = y - f(x, *par)
+			chisq = np.sum((deltay / dy) ** 2)
 			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
-			out = FitCurveOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y, datax=x, datay=y, method=method, check=check)
+			out = FitCurveOutput(par=par, cov=cov, chisq=chisq, deltay=deltay, datax=x, datay=y, method=method, check=check)
 		else:
 			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
 			out = FitCurveOutput(par=par, cov=cov, check=check)
@@ -677,11 +786,12 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 		par, cov = optimize.curve_fit(f, x, y, p0=p0[pfree], absolute_sigma=False, jac=jac, bounds=bounds, **kw)
 
 		if full_output:
-			delta_x = np.zeros(len(x))
-			delta_y = y - f(x, *par)
-			chisq = np.sum(delta_y ** 2)
+			x = _asarray(x)
+			y = np.asarray(y)
+			deltay = y - f(x, *par)
+			chisq = np.sum(deltay ** 2)
 			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
-			out = FitCurveOutput(par=par, cov=cov, chisq=chisq, delta_x=delta_x, delta_y=delta_y, datax=x, datay=y, method=method, check=check)
+			out = FitCurveOutput(par=par, cov=cov, chisq=chisq, deltay=deltay, datax=x, datay=y, method=method, check=check)
 		else:
 			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
 			out = FitCurveOutput(par=par, cov=cov, check=check)
