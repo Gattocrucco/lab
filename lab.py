@@ -139,6 +139,7 @@ def _fit_curve_ml(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdp=None, bounds=
 	def fun(px):
 		xstar = px[-len(x):]
 		return np.concatenate(((y - f(xstar, *px[:len(p0)])) * idy, (x - xstar) * idx))
+		# note: do not use a previously allocated buffer for this function since when estimating the jacobian numerically, returned arrays will be subtracted by least_squares.
 	if not (dfdx is None) and not (dfdps is None and dfdp is None):
 		jacm = np.zeros((len(y) + len(x), len(p0) + len(x)))
 		def jac(px):
@@ -1216,6 +1217,7 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 			
 				if plot.get('single', False):
 					from matplotlib import pyplot as plt
+					from matplotlib import gridspec
 				
 					prho = pc / np.outer(ps, ps)
 
@@ -1240,6 +1242,8 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 					else:
 						rows = 1 + len(p0)
 						cols = len(p0)
+					
+					G = gridspec.GridSpec(rows, cols)
 				
 					fig = plt.figure(figsize=(4*cols, 2.3*rows))
 					fig.clf()
@@ -1248,7 +1252,7 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 				
 					# histogram of parameter; diagonal
 					for i in range(len(p0)):					
-						ax = fig.add_subplot(rows, cols, 1 + i * (1 + cols))
+						ax = fig.add_subplot(G[i, i])
 						ax.set_title("$(p_{%d}'-{p}_{%d})/\sigma_{%d}$" % (i, i, i))
 						S = (pars[:,i] - p0[i]) / np.sqrt(covs[:,i,i])
 						ax.hist(S, **histkw)
@@ -1257,7 +1261,7 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 					# histogram of covariance; lower triangle
 					for i in range(len(p0)):
 						for j in range(i):
-							ax = fig.add_subplot(rows, cols, 1 + i * cols + j)
+							ax = fig.add_subplot(G[i, j])
 							ax.set_title("$((p_{%d}'-p_{%d})\cdot(p_{%d}'-p_{%d})-\sigma_{%d%d})/\sqrt{\sigma_{%d%d}^2+\sigma_{%d}^2\sigma_{%d}^2}$" % (i, i, j, j, i, j, i, j, i, j))
 							C = ((pars[:,i] - p0[i]) * (pars[:,j] - p0[j]) - covs[:,i,j]) / np.sqrt(covs[:,i,j]**2 + covs[:,i,i]*covs[:,j,j])
 							ax.hist(C, **histkw)
@@ -1266,7 +1270,7 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 					# scatter plot of pairs of parameters; upper triangle
 					for i in range(len(p0)):
 						for j in range(i + 1, len(p0)):
-							ax = fig.add_subplot(rows, cols, 1 + i * cols + j)
+							ax = fig.add_subplot(G[i, j])
 							ax.set_title("$(p_{%d}'-p_{%d})/\sigma_{%d}$, $(p_{%d}'-p_{%d})/\sigma_{%d}$" % (i, i, i, j, j, j))
 							X = (pars[:, i] - p0[i]) / np.sqrt(covs[:,i,i])
 							Y = (pars[:, j] - p0[j]) / np.sqrt(covs[:,j,j])
@@ -1277,20 +1281,20 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 							ax.grid()
 				
 					# histogram of chisquare; last row column 1
-					ax = fig.add_subplot(rows, cols, 1 + cols * (rows - 1))
+					ax = fig.add_subplot(G[-1, 0])
 					ax.set_title('$\chi^2$')
 					plot_text('K.S. test p-value = %.2g %%\n$\mathrm{dof}=n-{\#}p = $%d\n$N\cdot(\\bar{\chi}^2 - \mathrm{dof}) = $%.2g $\sqrt{2\cdot\mathrm{dof}}$' % (100*pvalue, n-len(p0), chidist), loc=1, ax=ax)
 					ax.hist(chisq, **histkw)
 
 					# histogram of execution time; last row column 2
-					ax = fig.add_subplot(rows, cols, 2 + cols * (rows - 1))
+					ax = fig.add_subplot(G[-1, 1])
 					ax.set_title('time')
 					plot_text('Average time = %ss' % num2si(times.mean(), format='%.3g'), loc=1, ax=ax)
 					ax.hist(times, **histkw)
 					ax.ticklabel_format(style='sci', scilimits=(-2,2))
 
 					# example data; last row column 3 (or first row last column)
-					ax = fig.add_subplot(rows, cols, (3 + cols * (rows - 1)) if len(p0) >= 2 else cols)
+					ax = fig.add_subplot(G[-1, 2] if len(p0) >= 2 else G[0, -1])
 					ax.set_title('Example fit')
 					fx = np.linspace(min(xmean), max(xmean), 1000)
 					ax.plot(fx, f(fx, *p0), '-', color='lightgray', linewidth=5, label='$y=%s$' % flatex, zorder=1)
