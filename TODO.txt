@@ -30,7 +30,7 @@ ml diventa instabile (comunque entro l'1% dei fit) con errori sulle x grossi e m
 controllare che funzioni con x non array se dx is None
 
 fit_curve_bootstrap
-usare media e media delle covarianze perché ha più senso per i teoremi statistici. aggiungere opzione per usare media oppure pull
+aggiungere la possibilità di usare sia media pesata che non producendo due figure
 supportare pfix
 Non mi torna che i fit abbiano un bias se aumento gli errori sulle x, ma non se aumento sulle y. Ho provato a vedere se era per il fatto che nelle medie pesate taglio la parte di covarianza delle x ma mettercela non ha risolto (comunque è giusto mettercela, aggiungere pxcov a odrpack). La verosimiglianza non dovrebbe avere il massimo in un punto diverso se uso x*, theta oppure y*, theta. La cosa su cui ho dubbio è la stima della covarianza con l'hessiana, magari quella dipende dalla parametrizzazione? Verificare.
 

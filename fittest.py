@@ -11,7 +11,7 @@ p0s = [ # true parameters, axis 0 = parameter, axis 1 = values
 	# linspace(-1,1,10),
 	# logspace(0,1,10),
 	[1],
-	[1],
+	[2],
 	# [1],
 ]
 fs = [ # sympy functions
@@ -32,7 +32,7 @@ dxs = np.outer([1], np.ones(n)*.1)
 
 model = CurveModel(f, symb=True)
 plot = dict(single=showplot, vsp0=showpsplot, vsds=showpsdtplot)
-out = fit_curve_bootstrap(model, xmean, dxs=dxs, dys=dys, p0s=p0s, mcn=mcn, method=method, plot=plot, eta=True)
+out = fit_curve_bootstrap(model, xmean, dxs=dxs, dys=dys, p0s=p0s, mcn=mcn, method=method, plot=plot, eta=True, wavg=True, **(dict(max_cycles=10) if method == 'ev' else dict()))
 
 figs = []
 if showplot:

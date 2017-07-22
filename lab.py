@@ -1049,7 +1049,7 @@ class FitCurveBootstrapOutput:
 	def __init__(self):
 		pass
 
-def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method='auto', plot=dict(), eta=False, **kw):
+def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method='auto', plot=dict(), eta=False, wavg=True, **kw):
 	"""
 	Perform a bootstrap, i.e. given a curve model and datapoints with
 	uncertainties, generates random displacement to the data with normal
@@ -1188,7 +1188,7 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 				
 					# fit
 					start = time.time()
-					out = fit_curve(model, x, y, dx, dy, p0=p0, method=method, **_Nonedict(max_cycles=10 if method == 'ev' else None), **kw)
+					out = fit_curve(model, x, y, dx, dy, p0=p0, method=method, **kw)
 					end = time.time()
 				
 					# save results
@@ -1197,34 +1197,52 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 						chisq[i] = out.chisq
 					pars[i] = out.par
 					covs[i] = out.cov
-			
-				# save results
-				icovs = np.empty(covs.shape)
-				I = np.eye(len(p0))
-				for i in range(len(icovs)):
-					icovs[i] = linalg.solve(covs[i], I, assume_a='pos')
-				pc = linalg.solve(icovs.sum(axis=0), I, assume_a='pos')
-				wpar = np.empty(pars.shape)
-				for i in range(len(wpar)):
-					wpar[i] = icovs[i].dot(pars[i])
-				pm = pc.dot(wpar.sum(axis=0))
-				pm = pm[:len(p0)]
-				pc = pc[:len(p0), :len(p0)]
+				
+				if wavg:
+					# compute weighted mean
+					icovs = np.empty(covs.shape)
+					I = np.eye(len(p0))
+					for i in range(len(icovs)):
+						icovs[i] = linalg.solve(covs[i], I, assume_a='pos')
+					wpc = linalg.solve(icovs.sum(axis=0), I, assume_a='pos')
+					wpar = np.empty(pars.shape)
+					for i in range(len(wpar)):
+						wpar[i] = icovs[i].dot(pars[i])
+					wpm = wpc.dot(wpar.sum(axis=0))
+					wpm = wpm[:len(p0)]
+					wpc = wpc[:len(p0), :len(p0)]
+					wps = np.sqrt(np.diag(wpc))
+				
+				# compute "direct" mean
+				pm = pars.mean(axis=0)
+				pc = np.cov(pars, bias=False, rowvar=False)
 				ps = np.sqrt(np.diag(pc))
+				if not wavg:
+					sigmas = np.sqrt(np.einsum('ijj->ij', covs))
+					psm = np.mean(sigmas, axis=0)
+					pss = np.std(sigmas, axis=0, ddof=1)
+					pcm = np.mean(covs, axis=0)
+					pcs = np.std(covs, axis=0, ddof=1)
 
-				fp[(l, ll) + K] = pm
-				cp[(l, ll) + K] = pc
+				# save results
+				if wavg:
+					fp[(l, ll) + K] = wpm
+					cp[(l, ll) + K] = wpc
+				else:
+					fp[(l, ll) + K] = pm
+					cp[(l, ll) + K] = pc
 			
 				if plot.get('single', False):
 					from matplotlib import pyplot as plt
 					from matplotlib import gridspec
-				
-					prho = pc / np.outer(ps, ps)
 
-					pdist = (pm - np.array(p0)) / ps
-					pdistc = (np.outer(pm - np.array(p0), pm - np.array(p0)) - pc) / np.sqrt(pc**2 + np.outer(ps, ps)**2)
+					pdist = (pm - np.array(p0)) / (ps / np.sqrt(len(pars)))
+					if wavg:
+						wprho = wpc / np.outer(wps, wps)
+						wpdist = (wpm - np.array(p0)) / wps
+						wpdistc = (np.outer(wpm - np.array(p0), wpm - np.array(p0)) - wpc) / np.sqrt(wpc**2 + np.outer(wps, wps)**2)
+					
 					chidist = (chisq.mean() - (n-len(p0))) / chisq.std(ddof=1) * np.sqrt(len(chisq))
-				
 					pvalue = stats.kstest(chisq, 'chi2', (n-len(p0),))[1]
 							
 					maxscatter = 1000
@@ -1233,15 +1251,8 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 						color=(.9,.9,.9),
 						edgecolor=(.7, .7, .7)
 					)
-					if len(p0) == 1:
-						rows = 2
-						cols = 2
-					elif len(p0) == 2:
-						rows = 3
-						cols = 3
-					else:
-						rows = 1 + len(p0)
-						cols = len(p0)
+					rows = 1 + len(p0)
+					cols = max(3, 1 + len(p0))
 					
 					G = gridspec.GridSpec(rows, cols)
 				
@@ -1249,31 +1260,63 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 					fig.clf()
 					fig.set_tight_layout(True)
 					fig.canvas.set_window_title('%s, method “%s”' % (fstr, method))
-				
-					# histogram of parameter; diagonal
-					for i in range(len(p0)):					
-						ax = fig.add_subplot(G[i, i])
-						ax.set_title("$(p_{%d}'-{p}_{%d})/\sigma_{%d}$" % (i, i, i))
-						S = (pars[:,i] - p0[i]) / np.sqrt(covs[:,i,i])
-						ax.hist(S, **histkw)
-						plot_text("$p_%d = $%g\n$\\bar{p}_{%d}-p_{%d} = $%.2g $\\bar{\sigma}_{%d}$" % (i, p0[i], i, i, pdist[i], i), ax=ax)
 					
-					# histogram of covariance; lower triangle
+					# left column
+					# histogram of parameter
+					for i in range(len(p0)):
+						ax = fig.add_subplot(G[i, 0])
+						ax.set_title("$(p_{%d,i}-{p}_{%d})/\\sigma_{%d}$" % (i, i, i))
+						S = (pars[:,i] - p0[i]) / ps[i]
+						ax.hist(S, **histkw)
+						plot_text("$p_%d = $%g\n$\\langle{p}_{%d,i}\\rangle-p_{%d} = $%.2g ${\\sigma}_{%d}/\\sqrt{N}$" % (i, p0[i], i, i, pdist[i], i), ax=ax)
+				
+					# diagonal
+					for i in range(len(p0)):
+						ax = fig.add_subplot(G[i, i + 1])
+						if wavg:
+							# histogram of pull
+							ax.set_title("$(p_{%d,i}-{p}_{%d})/\\sigma_{%d,i}$" % (i, i, i))
+							S = (pars[:,i] - p0[i]) / np.sqrt(covs[:,i,i])
+							ax.hist(S, **histkw)
+							plot_text("$p_%d = $%g\n$\\bar{p}_{%d}-p_{%d} = $%.2g $\\bar{\sigma}_{%d}$" % (i, p0[i], i, i, wpdist[i], i), ax=ax)
+						else:
+							# histogram of sigma
+							ax.set_title("$(\\sigma_{%d,i}-\\sigma_{%d})/\\sigma[\\sigma_{%d,i}]$" % (i, i, i))
+							S = (np.sqrt(covs[:,i,i]) - ps[i]) / pss[i]
+							ax.hist(S, **histkw)
+							plot_text("$\\langle\\sigma_{%d,i}\\rangle-\\sigma_{%d}=$%.2g%%" % (i, i, (psm[i] - ps[i]) / ps[i] * 100), ax=ax)
+					
+					# lower triangle
 					for i in range(len(p0)):
 						for j in range(i):
-							ax = fig.add_subplot(G[i, j])
-							ax.set_title("$((p_{%d}'-p_{%d})\cdot(p_{%d}'-p_{%d})-\sigma_{%d%d})/\sqrt{\sigma_{%d%d}^2+\sigma_{%d}^2\sigma_{%d}^2}$" % (i, i, j, j, i, j, i, j, i, j))
-							C = ((pars[:,i] - p0[i]) * (pars[:,j] - p0[j]) - covs[:,i,j]) / np.sqrt(covs[:,i,j]**2 + covs[:,i,i]*covs[:,j,j])
-							ax.hist(C, **histkw)
-							plot_text("$\\bar{\\rho}_{%d%d} = $%.2g\n$(\\bar{p}_{%d}-p_{%d})\cdot(\\bar{p}_{%d}-p_{%d})-\\bar{\sigma}_{%d%d} = $%.2g $\sqrt{\\bar{\sigma}_{%d%d}^2+\\bar{\sigma}_{%d}^2\\bar{\sigma}_{%d}^2}$" % (i, j, prho[i,j], i, i, j, j, i, j, pdistc[i,j], i, j, i, j), ax=ax)
-				
-					# scatter plot of pairs of parameters; upper triangle
+							ax = fig.add_subplot(G[i, j + 1])
+							if wavg:
+								# histogram of pull on covariance
+								ax.set_title("$((p_{%d,i}-p_{%d})\\cdot(p_{%d,i}-p_{%d})-\\sigma_{%d%d,i})/\\sqrt{\\sigma_{%d%d,i}^2+\\sigma_{%d,i}^2\\sigma_{%d,i}^2}$" % (i, i, j, j, i, j, i, j, i, j))
+								C = ((pars[:,i] - p0[i]) * (pars[:,j] - p0[j]) - covs[:,i,j]) / np.sqrt(covs[:,i,j]**2 + covs[:,i,i]*covs[:,j,j])
+								ax.hist(C, **histkw)
+								plot_text("$\\bar{\\rho}_{%d%d} = $%.2g\n$(\\bar{p}_{%d}-p_{%d})\cdot(\\bar{p}_{%d}-p_{%d})-\\bar{\sigma}_{%d%d} = $%.2g $\sqrt{\\bar{\sigma}_{%d%d}^2+\\bar{\sigma}_{%d}^2\\bar{\sigma}_{%d}^2}$" % (i, j, wprho[i,j], i, i, j, j, i, j, wpdistc[i,j], i, j, i, j), ax=ax)
+							else:
+								# histogram of covariance
+								ax.set_title("$(\\sigma_{%d%d,i}-\\sigma_{%d%d})/\\sigma[\\sigma_{%d%d,i}]$" % (i, j, i, j, i, j))
+								C = (covs[:,i,j] - pc[i,j]) / pcs[i,j]
+								ax.hist(C, **histkw)
+								plot_text("$\\langle\\sigma_{%d%d,i}\\rangle-\\sigma_{%d%d}=$%.2g%%" % (i, j, i, j, (pcm[i,j] - pc[i,j]) / pc[i,j] * 100), ax=ax)
+					
+					# upper triangle
 					for i in range(len(p0)):
 						for j in range(i + 1, len(p0)):
-							ax = fig.add_subplot(G[i, j])
-							ax.set_title("$(p_{%d}'-p_{%d})/\sigma_{%d}$, $(p_{%d}'-p_{%d})/\sigma_{%d}$" % (i, i, i, j, j, j))
-							X = (pars[:, i] - p0[i]) / np.sqrt(covs[:,i,i])
-							Y = (pars[:, j] - p0[j]) / np.sqrt(covs[:,j,j])
+							ax = fig.add_subplot(G[i, j + 1])
+							if wavg:
+								# scatter plot of pull
+								ax.set_title("$(p_{%d,i}-p_{%d})/\\sigma_{%d,i}$, $(p_{%d,i}-p_{%d})/\\sigma_{%d,i}$" % (i, i, i, j, j, j))
+								X = (pars[:, i] - p0[i]) / np.sqrt(covs[:,i,i])
+								Y = (pars[:, j] - p0[j]) / np.sqrt(covs[:,j,j])
+							else:
+								# scatter plot of parameters
+								ax.set_title("$(p_{%d,i}-p_{%d})/\\sigma_{%d}$, $(p_{%d,i}-p_{%d})/\\sigma_{%d}$" % (i, i, i, j, j, j))
+								X = (pars[:,i] - p0[i]) / ps[i]
+								Y = (pars[:,j] - p0[j]) / ps[j]
 							if len(X) > maxscatter:
 								X = X[::int(ceil(len(X) / maxscatter))]
 								Y = Y[::int(ceil(len(Y) / maxscatter))]
@@ -1293,8 +1336,8 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 					ax.hist(times, **histkw)
 					ax.ticklabel_format(style='sci', scilimits=(-2,2))
 
-					# example data; last row column 3 (or first row last column)
-					ax = fig.add_subplot(G[-1, 2] if len(p0) >= 2 else G[0, -1])
+					# example data; last row column 3
+					ax = fig.add_subplot(G[-1, 2])
 					ax.set_title('Example fit')
 					fx = np.linspace(min(xmean), max(xmean), 1000)
 					ax.plot(fx, f(fx, *p0), '-', color='lightgray', linewidth=5, label='$y=%s$' % flatex, zorder=1)
