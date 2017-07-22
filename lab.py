@@ -1049,7 +1049,7 @@ class FitCurveBootstrapOutput:
 	def __init__(self):
 		pass
 
-def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method='auto', plot=dict(), eta=False, wavg=True, **kw):
+def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method='auto', plot=dict(), eta=False, wavg=True, method_kw=None, **kw):
 	"""
 	Perform a bootstrap, i.e. given a curve model and datapoints with
 	uncertainties, generates random displacement to the data with normal
@@ -1134,15 +1134,30 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 	f = model.f()
 	fstr = str(model)
 	flatex = model.latex()
+	
+	# methods
+	if not (isinstance(method, list) or isinstance(method, tuple)):
+		methods = [method]
+		contractmethod = True
+	else:
+		methods = method
+		contractmethod = False
+	if not (method_kw is None):
+		for k in range(len(method_kw)):
+			d = kw.copy()
+			d.update(method_kw[k])
+			method_kw[k] = d
+	else:
+		method_kw = [kw] * len(methods)
 
 	# initialize output arrays
 	p0shape = [len(p0) for p0 in p0s]
-	fp = np.empty([len(dxs), len(dys)] + p0shape + [len(p0s)]) # fitted parameters (mean over MC)
-	cp = np.empty([len(dxs), len(dys)] + p0shape + 2 * [len(p0s)]) # fitted parameters mean covariance matrices
-	chisq = np.empty(mcn) # chisquares from 1 MC run
-	pars = np.empty((mcn, len(p0s))) # parameters from 1 MC run
-	covs = np.empty((mcn, len(p0s), len(p0s))) # covariance matrices from 1 MC run
-	times = np.empty(mcn) # execution times from 1 MC run
+	fp = np.empty([len(methods), len(dxs), len(dys)] + p0shape + [len(p0s)]) # fitted parameters (mean over MC)
+	cp = np.empty([len(methods), len(dxs), len(dys)] + p0shape + 2 * [len(p0s)]) # fitted parameters mean covariance matrices
+	chisq = np.empty((mcn, len(methods))) # chisquares from 1 MC run
+	pars = np.empty((mcn, len(methods), len(p0s))) # parameters from 1 MC run
+	covs = np.empty((mcn, len(methods), len(p0s), len(p0s))) # covariance matrices from 1 MC run
+	times = np.empty((mcn, len(methods))) # execution times from 1 MC run
 
 	def plot_text(string, loc=2, ax=None, **kw):
 		locs = [
@@ -1185,71 +1200,87 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 					x = xmean + dx * deltax
 					deltay = stats.norm.rvs(size=n)
 					y = ymean + dy * deltay
+					
+					for j in range(len(methods)):
+						# fit
+						start = time.time()
+						out = fit_curve(model, x, y, dx, dy, p0=p0, method=methods[j], **(method_kw[j]))
+						end = time.time()
 				
-					# fit
-					start = time.time()
-					out = fit_curve(model, x, y, dx, dy, p0=p0, method=method, **kw)
-					end = time.time()
-				
-					# save results
-					if plot.get('single', False):
-						times[i] = end - start
-						chisq[i] = out.chisq
-					pars[i] = out.par
-					covs[i] = out.cov
+						# save results
+						if plot.get('single', False):
+							times[i, j] = end - start
+							chisq[i, j] = out.chisq
+						pars[i, j] = out.par
+						covs[i, j] = out.cov
 				
 				if wavg:
 					# compute weighted mean
 					icovs = np.empty(covs.shape)
 					I = np.eye(len(p0))
-					for i in range(len(icovs)):
-						icovs[i] = linalg.solve(covs[i], I, assume_a='pos')
-					wpc = linalg.solve(icovs.sum(axis=0), I, assume_a='pos')
+					for ij in np.ndindex(*covs.shape[:2]):
+						icovs[ij] = linalg.solve(covs[ij], I, assume_a='pos')
+					wpc = np.empty(covs.shape[1:])
+					for i in range(len(wpc)):
+						wpc[i] = linalg.solve(icovs[:,i].sum(axis=0), I, assume_a='pos')
 					wpar = np.empty(pars.shape)
-					for i in range(len(wpar)):
-						wpar[i] = icovs[i].dot(pars[i])
-					wpm = wpc.dot(wpar.sum(axis=0))
-					wpm = wpm[:len(p0)]
-					wpc = wpc[:len(p0), :len(p0)]
-					wps = np.sqrt(np.diag(wpc))
+					for ij in np.ndindex(*pars.shape[:2]):
+						wpar[ij] = icovs[ij].dot(pars[ij])
+					wpm = np.empty(pars.shape[1:])
+					wps = np.empty(wpm.shape)
+					for i in range(len(wpm)):
+						wpm[i] = wpc[i].dot(wpar[:,i].sum(axis=0))
+						wps[i] = np.sqrt(np.diag(wpc[i]))
 				
 				# compute "direct" mean
 				pm = pars.mean(axis=0)
-				pc = np.cov(pars, bias=False, rowvar=False)
-				ps = np.sqrt(np.diag(pc))
+				pc = np.empty(covs.shape[1:])
+				ps = np.empty(pm.shape)
+				for i in range(len(pc)):
+					pc[i] = np.cov(pars[:,i], bias=False, rowvar=False)
+					ps[i] = np.sqrt(np.diag(pc[i]))
 				if not wavg:
-					sigmas = np.sqrt(np.einsum('ijj->ij', covs))
+					sigmas = np.sqrt(np.einsum('ijkk->ijk', covs))
 					psm = np.mean(sigmas, axis=0)
 					pss = np.std(sigmas, axis=0, ddof=1)
 					pcm = np.mean(covs, axis=0)
 					pcs = np.std(covs, axis=0, ddof=1)
 
 				# save results
-				if wavg:
-					fp[(l, ll) + K] = wpm
-					cp[(l, ll) + K] = wpc
-				else:
-					fp[(l, ll) + K] = pm
-					cp[(l, ll) + K] = pc
-			
+				for k in range(len(methods)):
+					if wavg:
+						fp[(k, l, ll) + K] = wpm[k]
+						cp[(k, l, ll) + K] = wpc[k]
+					else:
+						fp[(k, l, ll) + K] = pm[k]
+						cp[(k, l, ll) + K] = pc[k]
+				
+				# plot
 				if plot.get('single', False):
 					from matplotlib import pyplot as plt
 					from matplotlib import gridspec
 
-					pdist = (pm - np.array(p0)) / (ps / np.sqrt(len(pars)))
+					pdist = (pm - np.array(p0).reshape(1,-1)) / (ps / np.sqrt(len(pars)))
 					if wavg:
-						wprho = wpc / np.outer(wps, wps)
-						wpdist = (wpm - np.array(p0)) / wps
-						wpdistc = (np.outer(wpm - np.array(p0), wpm - np.array(p0)) - wpc) / np.sqrt(wpc**2 + np.outer(wps, wps)**2)
+						wprho = wpc / np.einsum('ij,il->ijl', wps, wps)
+						wpdist = (wpm - np.array(p0).reshape(1,-1)) / wps
+						wpdistc = (np.einsum('ij,il->ijl', wpm - np.array(p0).reshape(1,-1), wpm - np.array(p0).reshape(1,-1)) - wpc) / np.sqrt(wpc**2 + np.einsum('ij,il->ijl', wps, wps)**2)
 					
 					chidist = (chisq.mean() - (n-len(p0))) / chisq.std(ddof=1) * np.sqrt(len(chisq))
-					pvalue = stats.kstest(chisq, 'chi2', (n-len(p0),))[1]
+					pvalue = np.empty(len(methods))
+					for k in range(len(pvalue)):
+						pvalue[k] = stats.kstest(chisq[:,k], 'chi2', (n-len(p0),))[1]
 							
 					maxscatter = 1000
 					histkw = dict(
 						bins=int(np.sqrt(min(mcn, 1000))),
-						color=(.9,.9,.9),
-						edgecolor=(.7, .7, .7)
+						# color=(.9,.9,.9),
+						# edgecolor=(.7, .7, .7)
+					)
+					box = dict(
+						boxstyle='round',
+						alpha=0.5,
+						facecolor='white'
 					)
 					rows = 1 + len(p0)
 					cols = max(3, 1 + len(p0))
@@ -1259,16 +1290,20 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 					fig = plt.figure(figsize=(4*cols, 2.3*rows))
 					fig.clf()
 					fig.set_tight_layout(True)
-					fig.canvas.set_window_title('%s, method “%s”' % (fstr, method))
+					fig.canvas.set_window_title('%s method%s %s' % (fstr, 's' if len(methods) > 1 else '', ', '.join(methods)))
 					
 					# left column
 					# histogram of parameter
 					for i in range(len(p0)):
 						ax = fig.add_subplot(G[i, 0])
 						ax.set_title("$(p_{%d,i}-{p}_{%d})/\\sigma_{%d}$" % (i, i, i))
-						S = (pars[:,i] - p0[i]) / ps[i]
-						ax.hist(S, **histkw)
-						plot_text("$p_%d = $%g\n$\\langle{p}_{%d,i}\\rangle-p_{%d} = $%.2g ${\\sigma}_{%d}/\\sqrt{N}$" % (i, p0[i], i, i, pdist[i], i), ax=ax)
+						S = (pars[:,:,i] - p0[i]) / ps[:,i].reshape(1,-1)
+						labels=[]
+						for k in range(len(methods)):
+							labels.append("$\\langle{p}_{%d,i}\\rangle-p_{%d} = $%.2g ${\\sigma}_{%d}/\\sqrt{N}$" % (i, i, pdist[k,i], i))
+						ax.hist(S, label=labels, **histkw)
+						plot_text("$p_%d = $%g" % (i, p0[i]), ax=ax, bbox=box)
+						ax.legend(loc=1, fontsize='small')
 				
 					# diagonal
 					for i in range(len(p0)):
@@ -1276,15 +1311,23 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 						if wavg:
 							# histogram of pull
 							ax.set_title("$(p_{%d,i}-{p}_{%d})/\\sigma_{%d,i}$" % (i, i, i))
-							S = (pars[:,i] - p0[i]) / np.sqrt(covs[:,i,i])
-							ax.hist(S, **histkw)
-							plot_text("$p_%d = $%g\n$\\bar{p}_{%d}-p_{%d} = $%.2g $\\bar{\sigma}_{%d}$" % (i, p0[i], i, i, wpdist[i], i), ax=ax)
+							S = (pars[:,:,i] - p0[i]) / np.sqrt(covs[:,:,i,i])
+							labels = []
+							for k in range(len(methods)):
+								labels.append("$\\bar{p}_{%d}-p_{%d} = $%.2g $\\bar{\sigma}_{%d}$" % (i, i, wpdist[k,i], i))
 						else:
 							# histogram of sigma
 							ax.set_title("$(\\sigma_{%d,i}-\\sigma_{%d})/\\sigma[\\sigma_{%d,i}]$" % (i, i, i))
-							S = (np.sqrt(covs[:,i,i]) - ps[i]) / pss[i]
-							ax.hist(S, **histkw)
-							plot_text("$\\langle\\sigma_{%d,i}\\rangle-\\sigma_{%d}=$%.2g%%" % (i, i, (psm[i] - ps[i]) / ps[i] * 100), ax=ax)
+							S = (np.sqrt(covs[:,:,i,i]) - ps[:,i].reshape(1,-1)) / pss[:,i].reshape(1,-1)
+							labels = []
+							for k in range(len(methods)):
+								labels.append("$\\langle\\sigma_{%d,i}\\rangle-\\sigma_{%d}=$%.2g%%" % (i, i, (psm[k,i] - ps[k,i]) / ps[k,i] * 100))
+						ax.hist(S, **histkw, label=labels)
+						ax.legend(loc=1, fontsize='small')
+						s = []
+						for k in range(len(methods)):
+							s.append("$\\sigma_{%d}=$%.2g" % (i, ps[k,i]))
+						plot_text('\n'.join(s), loc=2, ax=ax, fontsize='small', bbox=box)
 					
 					# lower triangle
 					for i in range(len(p0)):
@@ -1293,15 +1336,23 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 							if wavg:
 								# histogram of pull on covariance
 								ax.set_title("$((p_{%d,i}-p_{%d})\\cdot(p_{%d,i}-p_{%d})-\\sigma_{%d%d,i})/\\sqrt{\\sigma_{%d%d,i}^2+\\sigma_{%d,i}^2\\sigma_{%d,i}^2}$" % (i, i, j, j, i, j, i, j, i, j))
-								C = ((pars[:,i] - p0[i]) * (pars[:,j] - p0[j]) - covs[:,i,j]) / np.sqrt(covs[:,i,j]**2 + covs[:,i,i]*covs[:,j,j])
-								ax.hist(C, **histkw)
-								plot_text("$\\bar{\\rho}_{%d%d} = $%.2g\n$(\\bar{p}_{%d}-p_{%d})\cdot(\\bar{p}_{%d}-p_{%d})-\\bar{\sigma}_{%d%d} = $%.2g $\sqrt{\\bar{\sigma}_{%d%d}^2+\\bar{\sigma}_{%d}^2\\bar{\sigma}_{%d}^2}$" % (i, j, wprho[i,j], i, i, j, j, i, j, wpdistc[i,j], i, j, i, j), ax=ax)
+								C = ((pars[:,:,i] - p0[i]) * (pars[:,:,j] - p0[j]) - covs[:,:,i,j]) / np.sqrt(covs[:,:,i,j]**2 + covs[:,:,i,i]*covs[:,:,j,j])
+								labels = []
+								for k in range(len(methods)):
+									labels.append("$(\\bar{p}_{%d}-p_{%d})\cdot(\\bar{p}_{%d}-p_{%d})-\\bar{\sigma}_{%d%d} = $%.2g $\sqrt{\\bar{\sigma}_{%d%d}^2+\\bar{\sigma}_{%d}^2\\bar{\sigma}_{%d}^2}$" % (i, i, j, j, i, j, wpdistc[k,i,j], i, j, i, j))
 							else:
 								# histogram of covariance
 								ax.set_title("$(\\sigma_{%d%d,i}-\\sigma_{%d%d})/\\sigma[\\sigma_{%d%d,i}]$" % (i, j, i, j, i, j))
-								C = (covs[:,i,j] - pc[i,j]) / pcs[i,j]
-								ax.hist(C, **histkw)
-								plot_text("$\\langle\\sigma_{%d%d,i}\\rangle-\\sigma_{%d%d}=$%.2g%%" % (i, j, i, j, (pcm[i,j] - pc[i,j]) / pc[i,j] * 100), ax=ax)
+								C = (covs[:,:,i,j] - pc[:,i,j].reshape(1,-1)) / pcs[:,i,j].reshape(1,-1)
+								labels = []
+								for k in range(len(methods)):
+									labels.append("$\\langle\\sigma_{%d%d,i}\\rangle-\\sigma_{%d%d}=$%.2g%%" % (i, j, i, j, (pcm[k,i,j] - pc[k,i,j]) / pc[k,i,j] * 100))
+								s = []
+								for k in range(len(methods)):
+									s.append("$\\rho_{%d%d}=$%.2g" % (i, j, pc[k,i,j] / (ps[k,i] * ps[k,j])))
+								plot_text('\n'.join(s), loc=2, ax=ax, fontsize='small', bbox=box)
+							ax.hist(C, **histkw, label=labels)
+							ax.legend(loc=1, fontsize='small')
 					
 					# upper triangle
 					for i in range(len(p0)):
@@ -1310,30 +1361,39 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 							if wavg:
 								# scatter plot of pull
 								ax.set_title("$(p_{%d,i}-p_{%d})/\\sigma_{%d,i}$, $(p_{%d,i}-p_{%d})/\\sigma_{%d,i}$" % (i, i, i, j, j, j))
-								X = (pars[:, i] - p0[i]) / np.sqrt(covs[:,i,i])
-								Y = (pars[:, j] - p0[j]) / np.sqrt(covs[:,j,j])
+								plot_text("$\\bar{\\rho}_{%d%d} = $%.2g" % (i, j, wprho[k,i,j]), loc=2, ax=ax)
+								X = (pars[:,:,i] - p0[i]) / np.sqrt(covs[:,:,i,i])
+								Y = (pars[:,:,j] - p0[j]) / np.sqrt(covs[:,:,j,j])
 							else:
 								# scatter plot of parameters
 								ax.set_title("$(p_{%d,i}-p_{%d})/\\sigma_{%d}$, $(p_{%d,i}-p_{%d})/\\sigma_{%d}$" % (i, i, i, j, j, j))
-								X = (pars[:,i] - p0[i]) / ps[i]
-								Y = (pars[:,j] - p0[j]) / ps[j]
+								X = (pars[:,:,i] - p0[i]) / ps[:,i].reshape(1,-1)
+								Y = (pars[:,:,j] - p0[j]) / ps[:,j].reshape(1,-1)
 							if len(X) > maxscatter:
-								X = X[::int(ceil(len(X) / maxscatter))]
-								Y = Y[::int(ceil(len(Y) / maxscatter))]
-							ax.plot(X, Y, '.k', markersize=3, alpha=0.35)
+								X = X[::int(ceil(len(X) / maxscatter)),:]
+								Y = Y[::int(ceil(len(Y) / maxscatter)),:]
+							for k in range(len(methods)):
+								ax.plot(X[:,k], Y[:,k], '.', markersize=3, alpha=0.35)
 							ax.grid()
 				
 					# histogram of chisquare; last row column 1
 					ax = fig.add_subplot(G[-1, 0])
 					ax.set_title('$\chi^2$')
-					plot_text('K.S. test p-value = %.2g %%\n$\mathrm{dof}=n-{\#}p = $%d\n$N\cdot(\\bar{\chi}^2 - \mathrm{dof}) = $%.2g $\sqrt{2\cdot\mathrm{dof}}$' % (100*pvalue, n-len(p0), chidist), loc=1, ax=ax)
-					ax.hist(chisq, **histkw)
+					labels = []
+					for k in range(len(methods)):
+						labels.append('K.S. test p-value = %.2g' % (pvalue[k],))
+					# plot_text('K.S. test p-value = %.2g %%\n$\mathrm{dof}=n-{\#}p = $%d\n$N\cdot(\\bar{\chi}^2 - \mathrm{dof}) = $%.2g $\sqrt{2\cdot\mathrm{dof}}$' % (100*pvalue, n-len(p0), chidist), loc=1, ax=ax)
+					ax.hist(chisq, **histkw, label=labels)
+					ax.legend(loc=1, fontsize='small')
 
 					# histogram of execution time; last row column 2
 					ax = fig.add_subplot(G[-1, 1])
 					ax.set_title('time')
-					plot_text('Average time = %ss' % num2si(times.mean(), format='%.3g'), loc=1, ax=ax)
-					ax.hist(times, **histkw)
+					labels = []
+					for k in range(len(methods)):
+						labels.append('Average time = %ss' % num2si(times[:,k].mean(), format='%.3g'))
+					ax.hist(times, **histkw, label=labels)
+					ax.legend(loc=1, fontsize='small')
 					ax.ticklabel_format(style='sci', scilimits=(-2,2))
 
 					# example data; last row column 3
@@ -1342,7 +1402,8 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 					fx = np.linspace(min(xmean), max(xmean), 1000)
 					ax.plot(fx, f(fx, *p0), '-', color='lightgray', linewidth=5, label='$y=%s$' % flatex, zorder=1)
 					ax.errorbar(x, y, dy, dx, fmt=',k', capsize=0, label='Data', zorder=2)
-					ax.plot(fx, f(fx, *pars[-1,:len(p0)]), 'r-', linewidth=1, label='Fit', zorder=3, alpha=1)
+					for k in range(len(methods)):
+						ax.plot(fx, f(fx, *pars[-1,k,:]), '-', linewidth=1, label='Fit %s' % (methods[k],), zorder=3, alpha=1)
 					# plot_text('$y=%s$\n$y=%s$' % (flatex, sympy.latex(fsym(xsym, *p0))), fontsize=20, ax=ax)
 					ax.ticklabel_format(style='sci', axis='both', scilimits=(-3,3))
 					ax.legend(loc=0, fontsize='small')
@@ -1414,8 +1475,8 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 		plot_vsds = None
 	
 	out = FitCurveBootstrapOutput()
-	out.fp = fp
-	out.cp = cp
+	out.fp = fp[0,...] if contractmethod else fp
+	out.cp = cp[0,...] if contractmethod else cp
 	plotout = dict()
 	if len(plots_single) > 0:
 		plotout['single'] = plots_single
