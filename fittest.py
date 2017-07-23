@@ -22,8 +22,8 @@ fs = [ # sympy functions
 ]
 f = fs[3] # function to fit
 
-mcn = 1000 # number of repetitions (monte carlo)
-methods = ['odrpack', 'linodr', 'ev'] # ev, linodr, odrpack, ml, wleastsq, leastsq
+mcn = 100 # number of repetitions (monte carlo)
+methods = ['linodr2', 'linodr2bis', 'linodr2nd'] # ev, linodr, odrpack, ml, wleastsq, leastsq
 xmean = np.linspace(0, 10, 10) # true x
 n = len(xmean) # number of points
 dys = np.outer([1], np.ones(n)*.1) # errors, axis 0 = dataset, axis 1 = point

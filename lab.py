@@ -133,6 +133,136 @@ def _fit_curve_odr(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, dfd
 	cov = np.dot(VT.T / s**2, VT)
 	return par, cov, result
 
+def _fit_curve_odr_2(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, dfdp=None, dfdpdx=None, **kw):
+	dy2 = dy**2
+	dx2 = dx**2
+	delta = 200
+	def fun(p):
+		deriv2 = dfdx(x, *p)**2
+		effd2 = dy2 + deriv2 * dx2
+		return np.concatenate(((y - f(x, *p)) / np.sqrt(effd2), np.sqrt(np.log(effd2 / (1 + deriv2)) + delta)))
+	if not ((dfdps is None or dfdpdxs is None) and (dfdp is None or dfdpdx is None)):
+		rt = np.empty((len(y) * 2, len(p0)))
+		def jac(p):
+			sdfdx = dfdx(x, *p)
+			sdfdx2 = sdfdx ** 2
+			rad = dy2 + sdfdx2 * dx2
+			srad = np.sqrt(rad)
+			res = (y - f(x, *p)) * dx2 * sdfdx / srad
+			if not (dfdps is None or dfdpdxs is None):
+				for i in range(len(p)):
+					sdfdpdx = dfdpdxs[i](x, *p)
+					rt[:len(y),i] = - (dfdps[i](x, *p) * srad + sdfdpdx * res) / rad
+					rt[len(y):,i] = sdfdx * (dx2 - dy2) / ((1+sdfdx2) * rad * np.sqrt(np.log(rad/(1+sdfdx2)) + delta)) * sdfdpdx
+			else:
+				sdfdpdx = dfdpdx(x, *p)
+				rt[:len(y)] = - (dfdp(x, *p) * srad.reshape(-1,1) + sdfdpdx * res.reshape(-1,1)) / rad.reshape(-1,1)
+				rt[len(y):] = (sdfdx * (dx2 - dy2) / ((1+sdfdx2) * rad * np.sqrt(np.log(rad/(1+sdfdx2)) + delta))).reshape(-1,1) * sdfdpdx
+			return rt
+	else:
+		jac = None
+	kw.update(_Nonedict(jac=jac))
+	result = optimize.least_squares(fun, p0, **kw)
+	par = result.x
+	_, s, VT = linalg.svd(result.jac, full_matrices=False)
+	threshold = np.finfo(float).eps * max(result.jac.shape) * s[0]
+	s = s[s > threshold]
+	VT = VT[:s.size]
+	cov = np.dot(VT.T / s**2, VT)
+	return par, cov, result
+
+def _fit_curve_odr_2_bis(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, dfdp=None, dfdpdx=None, **kw):
+	import numdifftools as numdiff
+	
+	dy2 = dy**2
+	dx2 = dx**2
+	def minusloglikelihood(p):
+		sdfdx = dfdx(x, *p)
+		sdfdx2 = sdfdx ** 2
+		effd2 = dy2 + sdfdx2 * dx2
+		res = y - f(x, *p)
+		return 1/2 * np.sum(np.log(effd2 / (1 + sdfdx2)) + res**2 / effd2)
+	
+	def jac(p):
+		sdfdx = dfdx(x, *p)
+		sdfdx2 = sdfdx ** 2
+		effd2 = dy2 + sdfdx2 * dx2
+		effd = np.sqrt(effd2)
+		res = y - f(x, *p)
+		rt = np.empty(len(p))
+		for i in range(len(p)):
+			sdfdpdx = dfdpdxs[i](x, *p)
+			rt[i] = np.sum(sdfdx * (dx2 - dy2) / (1 + sdfdx2) / effd2 * sdfdpdx - (res * dfdps[i](x, *p) * effd2 + res**2 * dx2 * sdfdx * sdfdpdx) / effd2**2)
+		
+		return rt
+	
+	result = optimize.minimize(minusloglikelihood, p0, jac=jac, **kw)
+	
+	par = result.x
+	hess = numdiff.Hessian(minusloglikelihood)(par)
+	try:
+		cov = linalg.inv(hess)
+	except linalg.LinAlgError:
+		W, V = linalg.eigh(hess)
+		cov = np.zeros(hess.shape)
+		threshold = 1e-10
+		np.fill_diagonal(cov, [(1 / w if abs(w) > threshold else 0) for w in W])
+		cov = V.dot(cov).dot(V.T)
+	return par, cov, result
+
+def _fit_curve_odr_2_nd(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, dfdp=None, dfdpdx=None, **kw):
+	import numdifftools as numdiff
+
+	dy2 = dy**2
+	dx2 = dx**2
+	delta = 200
+	def fun(p):
+		deriv2 = dfdx(x, *p)**2
+		effd2 = dy2 + deriv2 * dx2
+		return np.concatenate(((y - f(x, *p)) / np.sqrt(effd2), np.sqrt(np.log(effd2 / (1 + deriv2)) + delta)))
+	if not ((dfdps is None or dfdpdxs is None) and (dfdp is None or dfdpdx is None)):
+		rt = np.empty((len(y) * 2, len(p0)))
+		def jac(p):
+			sdfdx = dfdx(x, *p)
+			sdfdx2 = sdfdx ** 2
+			rad = dy2 + sdfdx2 * dx2
+			srad = np.sqrt(rad)
+			res = (y - f(x, *p)) * dx2 * sdfdx / srad
+			if not (dfdps is None or dfdpdxs is None):
+				for i in range(len(p)):
+					sdfdpdx = dfdpdxs[i](x, *p)
+					rt[:len(y),i] = - (dfdps[i](x, *p) * srad + sdfdpdx * res) / rad
+					rt[len(y):,i] = sdfdx * (dx2 - dy2) / ((1+sdfdx2) * rad * np.sqrt(np.log(rad/(1+sdfdx2)) + delta)) * sdfdpdx
+			else:
+				sdfdpdx = dfdpdx(x, *p)
+				rt[:len(y)] = - (dfdp(x, *p) * srad.reshape(-1,1) + sdfdpdx * res.reshape(-1,1)) / rad.reshape(-1,1)
+				rt[len(y):] = (sdfdx * (dx2 - dy2) / ((1+sdfdx2) * rad * np.sqrt(np.log(rad/(1+sdfdx2)) + delta))).reshape(-1,1) * sdfdpdx
+			return rt
+	else:
+		jac = None
+	kw.update(_Nonedict(jac=jac))
+	result = optimize.least_squares(fun, p0, **kw)
+	par = result.x
+
+	def minusloglikelihood(p):
+		sdfdx = dfdx(x, *p)
+		sdfdx2 = sdfdx ** 2
+		effd2 = dy2 + sdfdx2 * dx2
+		res = y - f(x, *p)
+		return 1/2 * np.sum(np.log(effd2 / (1 + sdfdx2)) + res**2 / effd2)
+
+	hess = numdiff.Hessian(minusloglikelihood)(par)
+	try:
+		cov = linalg.inv(hess)
+	except linalg.LinAlgError:
+		W, V = linalg.eigh(hess)
+		cov = np.zeros(hess.shape)
+		threshold = 1e-10
+		np.fill_diagonal(cov, [(1 / w if abs(w) > threshold else 0) for w in W])
+		cov = V.dot(cov).dot(V.T)
+
+	return par, cov, result
+
 def _fit_curve_ml(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdp=None, bounds=None, **kw):
 	idy = 1 / dy
 	idx = 1 / dx
@@ -326,7 +456,7 @@ class CurveModel:
 	symb : bool
 		If True, derivatives of f respect to x and *par are obtained as
 		needed with sympy. In this case, f must accept sympy variables as
-		arguments.
+		arguments, and return a sympy expression.
 	dfdx : function, optional
 		A function with the same signature as f. Returns the derivative of
 		f respect to x.
@@ -901,6 +1031,114 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 			print('Result:')
 			print(format_par_cov(par, cov))
 	
+	##### LINEARIZED ODR `2` #####
+
+	elif method == 'linodr2':
+		f = _apply_pfree(model.f(), pfree, p0)
+		dfdx = _apply_pfree(model.dfdx(), pfree, p0)
+		dfdps = _apply_pfree(model.dfdps(), pfree, p0)
+		dfdpdxs = _apply_pfree(model.dfdpdxs(), pfree, p0)
+		dfdp = _apply_pfree(model.dfdp(len(x)), pfree, p0)
+		dfdpdx = _apply_pfree(model.dfdpdx(len(x)), pfree, p0)
+		
+		if dfdx is None:
+			diff_step = kw.get('diff_step', np.finfo('float64').eps * 65536)
+			def dfdx(x, *p):
+				h = x * diff_step + diff_step
+				return (f(x + h, *p) - f(x, *p)) / h
+		
+		x = _asarray(x)
+		y = np.asarray(y)
+		dx = _asarray(dx)
+		dy = _asarray(dy)
+		if dx is None:
+			dx = 0
+		if dy is None:
+			dy = 0
+			
+		verbosity = max(0, min(print_info - 1, 2))
+		
+		par, cov, output = _fit_curve_odr_2(f, x, y, dx, dy, p0[pfree], dfdx=dfdx, dfdps=dfdps, dfdpdxs=dfdpdxs, dfdp=dfdp, dfdpdx=dfdpdx, verbose=verbosity, bounds=bounds, **kw)
+		
+		if full_output or not absolute_sigma:
+			deriv = dfdx(x, *par)
+			err2 = dy ** 2   +   deriv ** 2  *  dx ** 2
+			chisq = np.sum((y - f(x, *par))**2 / err2)
+		if not absolute_sigma:
+			cov *= chisq / (len(x) - len(par))
+		if full_output:
+			fact = (y - f(x, *par)) / err2
+			deltax = fact * deriv * dx**2
+			deltay = -fact * dy**2
+			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
+			out = FitCurveOutput(par=par, cov=cov, chisq=chisq, deltax=deltax, deltay=deltay, datax=x, datay=y, method=method, rawoutput=output, check=check)
+		else:
+			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
+			out = FitCurveOutput(par=par, cov=cov, check=check)
+		
+		if print_info >= 1:
+			if print_info > 1:
+				print()
+			else:
+				print(output.message)
+			print('Result:')
+			print(format_par_cov(par, cov))
+
+	##### LINEARIZED ODR `2bis` #####
+
+	elif method == 'linodr2bis' or method == 'linodr2nd':
+		f = _apply_pfree(model.f(), pfree, p0)
+		dfdx = _apply_pfree(model.dfdx(), pfree, p0)
+		dfdps = _apply_pfree(model.dfdps(), pfree, p0)
+		dfdpdxs = _apply_pfree(model.dfdpdxs(), pfree, p0)
+		dfdp = _apply_pfree(model.dfdp(len(x)), pfree, p0)
+		dfdpdx = _apply_pfree(model.dfdpdx(len(x)), pfree, p0)
+		
+		if dfdx is None:
+			diff_step = kw.get('diff_step', np.finfo('float64').eps * 65536)
+			def dfdx(x, *p):
+				h = x * diff_step + diff_step
+				return (f(x + h, *p) - f(x, *p)) / h
+		
+		x = _asarray(x)
+		y = np.asarray(y)
+		dx = _asarray(dx)
+		dy = _asarray(dy)
+		if dx is None:
+			dx = 0
+		if dy is None:
+			dy = 0
+			
+		verbosity = max(0, min(print_info - 1, 2))
+		
+		fun = dict(linodr2bis=_fit_curve_odr_2_bis, linodr2nd=_fit_curve_odr_2_nd)[method]
+		
+		par, cov, output = fun(f, x, y, dx, dy, p0[pfree], dfdx=dfdx, dfdps=dfdps, dfdpdxs=dfdpdxs, dfdp=dfdp, dfdpdx=dfdpdx, **kw)
+		
+		if full_output or not absolute_sigma:
+			deriv = dfdx(x, *par)
+			err2 = dy ** 2   +   deriv ** 2  *  dx ** 2
+			chisq = np.sum((y - f(x, *par))**2 / err2)
+		if not absolute_sigma:
+			cov *= chisq / (len(x) - len(par))
+		if full_output:
+			fact = (y - f(x, *par)) / err2
+			deltax = fact * deriv * dx**2
+			deltay = -fact * dy**2
+			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
+			out = FitCurveOutput(par=par, cov=cov, chisq=chisq, deltax=deltax, deltay=deltay, datax=x, datay=y, method=method, rawoutput=output, check=check)
+		else:
+			par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
+			out = FitCurveOutput(par=par, cov=cov, check=check)
+		
+		if print_info >= 1:
+			if print_info > 1:
+				print()
+			else:
+				print(output.message)
+			print('Result:')
+			print(format_par_cov(par, cov))
+
 	##### FULL-FEATURE MAXIMUM LIKELIHOOD #####
 	
 	elif method == 'ml':

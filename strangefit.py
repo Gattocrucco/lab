@@ -53,3 +53,40 @@ def fit_linear_hoch(x, y, dx, dy):
 	cov = invs(icov1 + icov2)
 	par = cov.dot(icov1.dot(par1) + icov2.dot(par2))
 	return par, cov
+
+def _fit_curve_odr_3(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, dfdp=None, dfdpdx=None, **kw):
+	dy2 = dy**2
+	dx2 = dx**2
+	delta = 200
+	def fun(p):
+		deriv2 = dfdx(x, *p)**2
+		effd2 = dy2 + deriv2 * dx2
+		return np.sqrt((y - f(x, *p))**2 / effd2 + np.log(effd2 / (1 + deriv2)) + delta)
+	if not ((dfdps is None or dfdpdxs is None) and (dfdp is None or dfdpdx is None)):
+		rt = np.empty((len(y), len(p0)))
+		def jac(p):
+			sdfdx = dfdx(x, *p)
+			sdfdx2 = sdfdx ** 2
+			rad = dy2 + sdfdx2 * dx2
+			srad = np.sqrt(rad)
+			Res = (y - f(x, *p)) / srad
+			res = Res * dx2 * sdfdx
+			if not (dfdps is None or dfdpdxs is None):
+				for i in range(len(p)):
+					sdfdpdx = dfdpdxs[i](x, *p)
+					rt[:,i] = (sdfdx * (dx2 - dy2) / ((1+sdfdx2) * rad) * sdfdpdx - (dfdps[i](x, *p) * srad + sdfdpdx * res) / rad * Res) / np.sqrt(Res**2 + np.log(rad / (1 + sdfdx2)) + delta)
+			else:
+				sdfdpdx = dfdpdx(x, *p)
+				rt[:] = ((sdfdx * (dx2 - dy2) / ((1+sdfdx2) * rad)).reshape(-1,1) * sdfdpdx - (dfdp(x, *p) * srad.reshape(-1,1) + sdfdpdx * res.reshape(-1,1)) * (Res / rad).reshape(-1,1)) / np.sqrt(Res**2 + np.log(rad / (1 + sdfdx2)) + delta).reshape(-1,1)
+			return rt
+	else:
+		jac = None
+	kw.update(_Nonedict(jac=jac))
+	result = optimize.least_squares(fun, p0, **kw)
+	par = result.x
+	_, s, VT = linalg.svd(result.jac, full_matrices=False)
+	threshold = np.finfo(float).eps * max(result.jac.shape) * s[0]
+	s = s[s > threshold]
+	VT = VT[:s.size]
+	cov = np.dot(VT.T / s**2, VT)
+	return par, cov, result
