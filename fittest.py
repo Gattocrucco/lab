@@ -3,9 +3,9 @@ import sympy
 import numpy as np
 
 #### PARAMETERS ####
-showplot = True # show plot after monte carlo run with fixed parameters
+showplot = False # show plot after monte carlo run with fixed parameters
 showpsplot = False # show parameter biases with fixed data
-showpsdtplot = False # show parameter vs. errors
+showpsdtplot = True # show parameter vs. errors
 
 p0s = [ # true parameters, axis 0 = parameter, axis 1 = values
 	# linspace(-1,1,10),
@@ -23,11 +23,11 @@ fs = [ # sympy functions
 f = fs[1] # function to fit
 
 mcn = 1000 # number of repetitions (monte carlo)
-methods = ['odrpack', 'linodr2', 'linodr2bis'] # ev, linodr, odrpack, ml, wleastsq, leastsq
+methods = ['odrpack', 'linodr'] # ev, linodr, odrpack, ml, wleastsq, leastsq
 xmean = np.linspace(0, 10, 10) # true x
 n = len(xmean) # number of points
 dys = np.outer([1], np.ones(n)*.1) # errors, axis 0 = dataset, axis 1 = point
-dxs = np.outer([3], np.ones(n)*.1)
+dxs = np.outer(np.linspace(1, 10, 10), np.ones(n)*.1)
 ####################
 
 method_kw = []

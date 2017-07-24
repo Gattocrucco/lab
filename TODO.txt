@@ -29,6 +29,7 @@ Nota: ribadisco che è instabile al punto da essere un bug, ogni volta che ci ca
 aggiungere px, pxcov a odrpack calcolandolo dopo il fit.
 ml diventa instabile (comunque entro l'1% dei fit) con errori sulle x grossi e modello oscillante.
 controllare che funzioni con x non array se dx is None
+usare -2logL nel minimo come X^2, cioè lo prendo dall'uscita del minimizzatore
 
 fit_curve_bootstrap
 aggiungere la possibilità di usare sia media pesata che non producendo due figure

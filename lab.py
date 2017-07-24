@@ -1491,7 +1491,7 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 						cp[(k, l, ll) + K] = wpc[k]
 					else:
 						fp[(k, l, ll) + K] = pm[k]
-						cp[(k, l, ll) + K] = pc[k]
+						cp[(k, l, ll) + K] = pc[k] / mcn
 				
 				# plot
 				if plot.get('single', False):
@@ -1599,7 +1599,7 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 							if wavg:
 								# scatter plot of pull
 								ax.set_title("$(p_{%d,i}-p_{%d})/\\sigma_{%d,i}$, $(p_{%d,i}-p_{%d})/\\sigma_{%d,i}$" % (i, i, i, j, j, j))
-								plot_text("$\\bar{\\rho}_{%d%d} = $%.2g" % (i, j, wprho[k,i,j]), loc=2, ax=ax)
+								plot_text("$\\bar{\\rho}_{%d%d} = $%.2g" % (i, j, wprho[k,i,j]), loc=2, ax=ax, bbox=box)
 								X = (pars[:,:,i] - p0[i]) / np.sqrt(covs[:,:,i,i])
 								Y = (pars[:,:,j] - p0[j]) / np.sqrt(covs[:,:,j,j])
 							else:
@@ -1651,24 +1651,37 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 
 	if plot.get('vsp0', False):
 		from matplotlib import pyplot as plt
-		fig = plt.figure(figsize=(10,7))
+		
+		fig = plt.figure(figsize=(4*len(p0s), 2.4*len(p0s)))
 		fig.clf()
 		fig.set_tight_layout(True)
-		fig.canvas.set_window_title('%s, method “%s”, parameter biases' % (fstr, method))
+		fig.canvas.set_window_title('%s method%s %s, parameter bias' % (fstr, 's' if len(methods) > 1 else '', ', '.join(methods)))
+		
+		box = dict(
+			boxstyle='round',
+			alpha=0.5,
+			facecolor='white'
+		)
+
 		for i in range(len(p0s)): # p_i = fitted
 			for j in range(len(p0s)): # p_j = true
 				ax = fig.add_subplot(len(p0s), len(p0s), 1 + i * len(p0s) + j)
 				K = [0] * len(p0s)
 				K[j] = Ellipsis
 				K = tuple(K)
-				ax.errorbar(p0s[j], fp[(0, 0) + K + (i,)] - (np.asarray(p0s[i]) if i == j else p0s[i][0]), np.sqrt(cp[(0, 0) + K + (i, i)]), fmt=',')
-				ax.set_xlabel('True $p_{%d}$' % j)
-				ax.set_ylabel('$p_{%d}\'-p_{%d}$' % (i, i))
-				pstr = ''
+				for k in range(len(methods)):
+					ax.errorbar(p0s[j], fp[(k, 0, 0) + K + (i,)] - (np.asarray(p0s[i]) if i == j else p0s[i][0]), np.sqrt(cp[(k, 0, 0) + K + (i, i)]), fmt='.', markersize=2, label=methods[k])
+				ax.legend(loc=1, fontsize='small')
+				ax.set_xlabel('$p_{%d}$' % j)
+				if wavg:
+					ax.set_ylabel('$\\bar{p}_{%d}-p_{%d}$ $(\\pm\\bar{\\sigma}_{%d})$' % (i, i, i))
+				else:
+					ax.set_ylabel('$\\langle p_{%d,i}\\rangle-p_{%d}$ $(\\pm\\sigma_{%d}/\\sqrt{N})$' % (i, i, i))
+				pstr = []
 				for k in range(len(p0s)):
 					if k != j:
-						pstr += '$p_{%d}$ = %.2g\n' % (k, p0s[k][0])
-				plot_text(pstr, ax=ax)
+						pstr.append('$p_{%d}$ = %.2g' % (k, p0s[k][0]))
+				plot_text('\n'.join(pstr), ax=ax, bbox=box)
 				ax.ticklabel_format(style='sci', axis='both', scilimits=(-3,3))
 				ax.grid()
 				
@@ -1679,11 +1692,17 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 	if plot.get('vsds', False):
 		from matplotlib import pyplot as plt
 	
-		fig = plt.figure(figsize=(8, 3 * len(p0s)))
+		fig = plt.figure(figsize=(8, 2.4 * len(p0s)))
 		fig.clf()
 		fig.set_tight_layout(True)
-		fig.canvas.set_window_title('%s, method “%s”, parameters vs. errors' % (fstr, method))
+		fig.canvas.set_window_title('%s method%s %s, parameter bias vs data uncertainty' % (fstr, 's' if len(methods) > 1 else '', ', '.join(methods)))
 	
+		box = dict(
+			boxstyle='round',
+			alpha=0.5,
+			facecolor='white'
+		)
+
 		ds = [
 			[dxs, dys, 'x', 'y', (Ellipsis, 0)],
 			[dys, dxs, 'y', 'x', (0, Ellipsis)]
@@ -1692,21 +1711,26 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 			for j in range(2):
 				ax = fig.add_subplot(len(p0s), 2, 2*i + j + 1)
 				if i == 0:
-					pstr = ''
+					pstr = []
 					for k in range(len(p0s)):
-						pstr += '$p_{%d}$ = %.2g\n' % (k, p0s[k][0])
-					pstr += '$\sqrt{\sum\Delta %s^2/n}=$%.2g' % (ds[j][3], np.sqrt((ds[j][1][0]**2).sum() / n))
-					plot_text(pstr, ax=ax)
+						pstr.append('$p_{%d}$ = %.2g' % (k, p0s[k][0]))
+					pstr.append('$\\sqrt{\\sum\\Delta {%s}^2/n}=$%.2g' % (ds[j][3], np.sqrt((ds[j][1][0]**2).sum() / n)))
+					plot_text('\n'.join(pstr), ax=ax, bbox=box, loc=2, fontsize='small')
 				if i == len(p0s) - 1:
-					ax.set_xlabel('$\sqrt{\sum\Delta %s^2/n}$' % ds[j][2])
+					ax.set_xlabel('$\\sqrt{\\sum\\Delta {%s}^2/n}$' % ds[j][2])
 				if j == 0:
-					ax.set_ylabel('$p_{%d}\'-p_{%d}$' % (i, i))
-				sel = ds[j][4] + tuple([0] * len(p0s)) + (i,)
-				Y = fp[sel] - np.asarray(p0s[i])
-				DY = np.sqrt(cp[sel + (i,)])
-				ax.errorbar(np.sqrt((ds[j][0]**2).sum(axis=-1) / n), Y, DY, fmt=',')
-				pvalue = stats.chi2.sf(sum((Y / DY)**2), len(Y))
-				plot_text('p-value = %.2g %%' % (pvalue * 100), loc=1, ax=ax)
+					if wavg:
+						ax.set_ylabel('$\\bar{p}_{%d}-p_{%d}$ $(\\pm\\bar{\\sigma}_{%d})$' % (i, i, i))
+					else:
+						ax.set_ylabel('$\\langle p_{%d,i}\\rangle-p_{%d}$ $(\\pm\\sigma_{%d}/\\sqrt{N})$' % (i, i, i))
+				for k in range(len(methods)):
+					sel = (k,) + ds[j][4] + tuple([0] * len(p0s)) + (i,)
+					Y = fp[sel] - np.asarray(p0s[i])
+					DY = np.sqrt(cp[sel + (i,)])
+					pvalue = stats.chi2.sf(sum((Y / DY)**2), len(Y))
+					ax.errorbar(np.sqrt((ds[j][0]**2).sum(axis=-1) / n), Y, DY, fmt='.', markersize=2, label='%s, p = %.2g' % (methods[k], pvalue))
+				ax.legend(loc=1, fontsize='small')
+				ax.grid()
 		
 		plot_vsds = fig
 	else:
