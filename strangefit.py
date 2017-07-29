@@ -2,7 +2,7 @@ import math
 import inspect
 import numpy as np
 import time
-from scipy import odr
+from scipy import odr, optimize
 from scipy.optimize import curve_fit, leastsq
 import lab
 
@@ -89,4 +89,134 @@ def _fit_curve_odr_3(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, d
 	s = s[s > threshold]
 	VT = VT[:s.size]
 	cov = np.dot(VT.T / s**2, VT)
+	return par, cov, result
+
+def _fit_curve_odr_2(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, dfdp=None, dfdpdx=None, **kw):
+	dy2 = dy**2
+	dx2 = dx**2
+	delta = 200
+	def fun(p):
+		deriv2 = dfdx(x, *p)**2
+		effd2 = dy2 + deriv2 * dx2
+		return np.concatenate(((y - f(x, *p)) / np.sqrt(effd2), np.sqrt(np.log(effd2 / (1 + deriv2)) + delta)))
+	if not ((dfdps is None or dfdpdxs is None) and (dfdp is None or dfdpdx is None)):
+		rt = np.empty((len(y) * 2, len(p0)))
+		def jac(p):
+			sdfdx = dfdx(x, *p)
+			sdfdx2 = sdfdx ** 2
+			rad = dy2 + sdfdx2 * dx2
+			srad = np.sqrt(rad)
+			res = (y - f(x, *p)) * dx2 * sdfdx / srad
+			if not (dfdps is None or dfdpdxs is None):
+				for i in range(len(p)):
+					sdfdpdx = dfdpdxs[i](x, *p)
+					rt[:len(y),i] = - (dfdps[i](x, *p) * srad + sdfdpdx * res) / rad
+					rt[len(y):,i] = sdfdx * (dx2 - dy2) / ((1+sdfdx2) * rad * np.sqrt(np.log(rad/(1+sdfdx2)) + delta)) * sdfdpdx
+			else:
+				sdfdpdx = dfdpdx(x, *p)
+				rt[:len(y)] = - (dfdp(x, *p) * srad.reshape(-1,1) + sdfdpdx * res.reshape(-1,1)) / rad.reshape(-1,1)
+				rt[len(y):] = (sdfdx * (dx2 - dy2) / ((1+sdfdx2) * rad * np.sqrt(np.log(rad/(1+sdfdx2)) + delta))).reshape(-1,1) * sdfdpdx
+			return rt
+	else:
+		jac = None
+	kw.update(_Nonedict(jac=jac))
+	result = optimize.least_squares(fun, p0, **kw)
+	par = result.x
+	_, s, VT = linalg.svd(result.jac, full_matrices=False)
+	threshold = np.finfo(float).eps * max(result.jac.shape) * s[0]
+	s = s[s > threshold]
+	VT = VT[:s.size]
+	cov = np.dot(VT.T / s**2, VT)
+	return par, cov, result
+
+def _fit_curve_odr_2_bis(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, dfdp=None, dfdpdx=None, **kw):
+	import numdifftools as numdiff
+	
+	dy2 = dy**2
+	dx2 = dx**2
+	def minusloglikelihood(p):
+		sdfdx = dfdx(x, *p)
+		sdfdx2 = sdfdx ** 2
+		effd2 = dy2 + sdfdx2 * dx2
+		res = y - f(x, *p)
+		return 1/2 * np.sum(np.log(effd2 / (1 + sdfdx2)) + res**2 / effd2)
+	
+	def jac(p):
+		sdfdx = dfdx(x, *p)
+		sdfdx2 = sdfdx ** 2
+		effd2 = dy2 + sdfdx2 * dx2
+		effd = np.sqrt(effd2)
+		res = y - f(x, *p)
+		rt = np.empty(len(p))
+		for i in range(len(p)):
+			sdfdpdx = dfdpdxs[i](x, *p)
+			rt[i] = np.sum(sdfdx * (dx2 - dy2) / (1 + sdfdx2) / effd2 * sdfdpdx - (res * dfdps[i](x, *p) * effd2 + res**2 * dx2 * sdfdx * sdfdpdx) / effd2**2)
+		
+		return rt
+	
+	result = optimize.minimize(minusloglikelihood, p0, jac=jac, **kw)
+	
+	par = result.x
+	hess = numdiff.Hessian(minusloglikelihood)(par)
+	try:
+		cov = linalg.inv(hess)
+	except linalg.LinAlgError:
+		W, V = linalg.eigh(hess)
+		cov = np.zeros(hess.shape)
+		threshold = 1e-10
+		np.fill_diagonal(cov, [(1 / w if abs(w) > threshold else 0) for w in W])
+		cov = V.dot(cov).dot(V.T)
+	return par, cov, result
+
+def _fit_curve_odr_2_nd(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, dfdp=None, dfdpdx=None, **kw):
+	import numdifftools as numdiff
+
+	dy2 = dy**2
+	dx2 = dx**2
+	delta = 200
+	def fun(p):
+		deriv2 = dfdx(x, *p)**2
+		effd2 = dy2 + deriv2 * dx2
+		return np.concatenate(((y - f(x, *p)) / np.sqrt(effd2), np.sqrt(np.log(effd2 / (1 + deriv2)) + delta)))
+	if not ((dfdps is None or dfdpdxs is None) and (dfdp is None or dfdpdx is None)):
+		rt = np.empty((len(y) * 2, len(p0)))
+		def jac(p):
+			sdfdx = dfdx(x, *p)
+			sdfdx2 = sdfdx ** 2
+			rad = dy2 + sdfdx2 * dx2
+			srad = np.sqrt(rad)
+			res = (y - f(x, *p)) * dx2 * sdfdx / srad
+			if not (dfdps is None or dfdpdxs is None):
+				for i in range(len(p)):
+					sdfdpdx = dfdpdxs[i](x, *p)
+					rt[:len(y),i] = - (dfdps[i](x, *p) * srad + sdfdpdx * res) / rad
+					rt[len(y):,i] = sdfdx * (dx2 - dy2) / ((1+sdfdx2) * rad * np.sqrt(np.log(rad/(1+sdfdx2)) + delta)) * sdfdpdx
+			else:
+				sdfdpdx = dfdpdx(x, *p)
+				rt[:len(y)] = - (dfdp(x, *p) * srad.reshape(-1,1) + sdfdpdx * res.reshape(-1,1)) / rad.reshape(-1,1)
+				rt[len(y):] = (sdfdx * (dx2 - dy2) / ((1+sdfdx2) * rad * np.sqrt(np.log(rad/(1+sdfdx2)) + delta))).reshape(-1,1) * sdfdpdx
+			return rt
+	else:
+		jac = None
+	kw.update(_Nonedict(jac=jac))
+	result = optimize.least_squares(fun, p0, **kw)
+	par = result.x
+
+	def minusloglikelihood(p):
+		sdfdx = dfdx(x, *p)
+		sdfdx2 = sdfdx ** 2
+		effd2 = dy2 + sdfdx2 * dx2
+		res = y - f(x, *p)
+		return 1/2 * np.sum(np.log(effd2 / (1 + sdfdx2)) + res**2 / effd2)
+
+	hess = numdiff.Hessian(minusloglikelihood)(par)
+	try:
+		cov = linalg.inv(hess)
+	except linalg.LinAlgError:
+		W, V = linalg.eigh(hess)
+		cov = np.zeros(hess.shape)
+		threshold = 1e-10
+		np.fill_diagonal(cov, [(1 / w if abs(w) > threshold else 0) for w in W])
+		cov = V.dot(cov).dot(V.T)
+
 	return par, cov, result
