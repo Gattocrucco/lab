@@ -3,9 +3,9 @@ import sympy
 import numpy as np
 
 #### PARAMETERS ####
-showplot = False # show plot after monte carlo run with fixed parameters
+showplot = True # show plot after monte carlo run with fixed parameters
 showpsplot = False # show parameter biases with fixed data
-showpsdtplot = True # show parameter vs. errors
+showpsdtplot = False # show parameter vs. errors
 
 p0s = [ # true parameters, axis 0 = parameter, axis 1 = values
 	# linspace(-1,1,10),
@@ -17,6 +17,8 @@ p0s = [ # true parameters, axis 0 = parameter, axis 1 = values
 fs = [ # sympy functions
 	lambda x, a, b: a * sympy.exp(x / b),
 	lambda x, m, q: m * x + q,
+	lambda y, m, q: (y - q) / m,
+	lambda x, theta, b: (x * sympy.sin(theta) + b) / sympy.cos(theta),
 	lambda x, m: m * x,
 	lambda t, A, w, phi: A * sympy.sin(w * t + phi)
 ]
@@ -24,10 +26,10 @@ f = fs[1] # function to fit
 
 mcn = 1000 # number of repetitions (monte carlo)
 methods = ['odrpack', 'linodr'] # ev, linodr, odrpack, ml, wleastsq, leastsq
-xmean = np.linspace(0, 10, 10) # true x
+xmean = np.linspace(0, 10, 20) # true x
 n = len(xmean) # number of points
-dys = np.outer([1], np.ones(n)*.1) # errors, axis 0 = dataset, axis 1 = point
-dxs = np.outer(np.linspace(1, 10, 10), np.ones(n)*.1)
+dys = np.outer([2], np.ones(n)*.1) # errors, axis 0 = dataset, axis 1 = point
+dxs = np.outer([10], np.ones(n)*.1)
 ####################
 
 method_kw = []
@@ -36,7 +38,7 @@ for m in methods:
 
 model = CurveModel(f, symb=True)
 plot = dict(single=showplot, vsp0=showpsplot, vsds=showpsdtplot)
-out = fit_curve_bootstrap(model, xmean, dxs=dxs, dys=dys, p0s=p0s, mcn=mcn, method=methods, plot=plot, eta=True, wavg=True, method_kw=method_kw)
+out = fit_curve_bootstrap(model, xmean, dxs=dxs, dys=dys, p0s=p0s, mcn=mcn, method=methods, plot=plot, eta=True, wavg=False, method_kw=method_kw)
 
 figs = []
 if showplot:

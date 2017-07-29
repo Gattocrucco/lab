@@ -989,7 +989,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 		dfdpdx = _apply_pfree(model.dfdpdx(len(x)), pfree, p0)
 		
 		if dfdx is None:
-			diff_step = kw.get('diff_step', np.finfo('float64').eps * 65536)
+			diff_step = kw.get('diff_step', 1e-8)
 			def dfdx(x, *p):
 				h = x * diff_step + diff_step
 				return (f(x + h, *p) - f(x, *p)) / h
@@ -1481,8 +1481,14 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 					sigmas = np.sqrt(np.einsum('ijkk->ijk', covs))
 					psm = np.mean(sigmas, axis=0)
 					pss = np.std(sigmas, axis=0, ddof=1)
+					
 					pcm = np.mean(covs, axis=0)
 					pcs = np.std(covs, axis=0, ddof=1)
+					
+					pcr = pc / np.einsum('ij,ik->ijk', ps, ps)
+					rhos = covs / np.einsum('ijk,ijl->ijkl', sigmas, sigmas)
+					pcrm = np.mean(rhos, axis=0)
+					pcrs = np.std(rhos, axis=0, ddof=1)
 
 				# save results
 				for k in range(len(methods)):
@@ -1517,7 +1523,7 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 					)
 					box = dict(
 						boxstyle='round',
-						alpha=0.5,
+						alpha=0.6,
 						facecolor='white'
 					)
 					rows = 1 + len(p0)
@@ -1540,7 +1546,7 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 						for k in range(len(methods)):
 							labels.append("$\\langle{p}_{%d,i}\\rangle-p_{%d} = $%.2g ${\\sigma}_{%d}/\\sqrt{N}$" % (i, i, pdist[k,i], i))
 						ax.hist(S, label=labels, **histkw)
-						plot_text("$p_%d = $%g" % (i, p0[i]), ax=ax, bbox=box)
+						plot_text("%s$p_%d = $%g" % ("$N=$%d\n" % mcn if i == 0 else '', i, p0[i]), ax=ax, bbox=box)
 						ax.legend(loc=1, fontsize='small')
 				
 					# diagonal
@@ -1556,7 +1562,7 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 						else:
 							# histogram of sigma
 							ax.set_title("$(\\sigma_{%d,i}-\\sigma_{%d})/\\sigma[\\sigma_{%d,i}]$" % (i, i, i))
-							S = (np.sqrt(covs[:,:,i,i]) - ps[:,i].reshape(1,-1)) / pss[:,i].reshape(1,-1)
+							S = (sigmas[:,:,i] - ps[:,i].reshape(1,-1)) / pss[:,i].reshape(1,-1)
 							labels = []
 							for k in range(len(methods)):
 								labels.append("$\\langle\\sigma_{%d,i}\\rangle-\\sigma_{%d}=$%.2g%%" % (i, i, (psm[k,i] - ps[k,i]) / ps[k,i] * 100))
@@ -1580,14 +1586,23 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 									labels.append("$(\\bar{p}_{%d}-p_{%d})\cdot(\\bar{p}_{%d}-p_{%d})-\\bar{\sigma}_{%d%d} = $%.2g $\sqrt{\\bar{\sigma}_{%d%d}^2+\\bar{\sigma}_{%d}^2\\bar{\sigma}_{%d}^2}$" % (i, i, j, j, i, j, wpdistc[k,i,j], i, j, i, j))
 							else:
 								# histogram of covariance
-								ax.set_title("$(\\sigma_{%d%d,i}-\\sigma_{%d%d})/\\sigma[\\sigma_{%d%d,i}]$" % (i, j, i, j, i, j))
-								C = (covs[:,:,i,j] - pc[:,i,j].reshape(1,-1)) / pcs[:,i,j].reshape(1,-1)
+								# ax.set_title("$(\\sigma_{%d%d,i}-\\sigma_{%d%d})/\\sigma[\\sigma_{%d%d,i}]$" % (i, j, i, j, i, j))
+								# C = (covs[:,:,i,j] - pc[:,i,j].reshape(1,-1)) / pcs[:,i,j].reshape(1,-1)
+								# labels = []
+								# for k in range(len(methods)):
+								# 	labels.append("$\\langle\\sigma_{%d%d,i}\\rangle-\\sigma_{%d%d}=$%.2g%%" % (i, j, i, j, (pcm[k,i,j] - pc[k,i,j]) / pc[k,i,j] * 100))
+								# s = []
+								# for k in range(len(methods)):
+								# 	s.append("$\\rho_{%d%d}=$%.2g" % (i, j, pc[k,i,j] / (ps[k,i] * ps[k,j])))
+								# plot_text('\n'.join(s), loc=2, ax=ax, fontsize='small', bbox=box)
+								ax.set_title("$(\\rho_{%d%d,i}-\\rho_{%d%d})/\\sigma[\\rho_{%d%d,i}]$" % (i, j, i, j, i, j))
+								C = (rhos[...,i,j] - pcr[...,i,j].reshape(1,-1)) / pcrs[:,i,j].reshape(1,-1)
 								labels = []
 								for k in range(len(methods)):
-									labels.append("$\\langle\\sigma_{%d%d,i}\\rangle-\\sigma_{%d%d}=$%.2g%%" % (i, j, i, j, (pcm[k,i,j] - pc[k,i,j]) / pc[k,i,j] * 100))
+									labels.append("$(1-\\langle\\rho_{%d%d,i}\\rangle^2)-(1-\\rho_{%d%d}^2)=$%.2g%%" % (i, j, i, j, ((1 - pcrm[k,i,j]**2) - (1 - pcr[k,i,j]**2)) / (1 - pcr[k,i,j]**2) * 100))
 								s = []
 								for k in range(len(methods)):
-									s.append("$\\rho_{%d%d}=$%.2g" % (i, j, pc[k,i,j] / (ps[k,i] * ps[k,j])))
+									s.append("$\\rho_{%d%d}=$%.2g" % (i, j, pcr[k,i,j]))
 								plot_text('\n'.join(s), loc=2, ax=ax, fontsize='small', bbox=box)
 							ax.hist(C, **histkw, label=labels)
 							ax.legend(loc=1, fontsize='small')
