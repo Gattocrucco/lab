@@ -949,7 +949,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 	##### POSTERIOR MEAN #####
 	
 	elif method == 'postmean':
-		import pymc3
+		import pymc3, theano
 		
 		mcmodel = kw.get('model', None)
 		nsamples = kw.get('nsamples', 10000)
@@ -960,13 +960,24 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 		if mcmodel is None:
 			mcmodel = pymc3.Model()		
 			with mcmodel:
+				data = dict()
+				for var in ['x', 'y', 'dx', 'dy']:
+					data[var] = theano.shared(eval(var))
+			
 				pars = []
 				for i in range(len(p0)):
 					pars.append(pymc3.Flat("p%d" % i, testval=p0[i]))
-				xt = pymc3.Flat('true x', shape=x.shape)
+				xt = pymc3.Flat('true x', shape=x.shape, testval=x)
+				
+				xs = pymc3.Normal('x data', mu=xt, sd=data['dx'], observed=data['x'])
+				ys = pymc3.Normal('y data', mu=f(xt, *pars), sd=data['dy'], observed=data['y'])
+				
+				mcmodel._fit_curve_data = data
+		else:
+			data = mcmodel._fit_curve_data
 			
-				xs = pymc3.Normal('x data', mu=xt, sd=dx, observed=x)
-				ys = pymc3.Normal('y data', mu=f(xt, *pars), sd=dy, observed=y)
+			for var in ['x', 'y', 'dx', 'dy']:
+				data[var].set_value(eval(var))
 		
 		with mcmodel:	
 			trace = pymc3.sample(nsamples, init='auto' if init else None, njobs=1, progressbar=print_info >= 1)
