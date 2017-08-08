@@ -951,9 +951,10 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 	elif method == 'postmean':
 		import pymc3, theano
 		
-		mcmodel = kw.get('model', None)
-		nsamples = kw.get('nsamples', 10000)
-		init = kw.get('init', True)
+		mcmodel = kw.pop('model', None)
+		nsamples = kw.pop('nsamples', 10000)
+		init = kw.pop('init', True)
+		njobs = kw.pop('njobs', 1)
 		
 		f = model.f_pymc3()
 		
@@ -966,7 +967,10 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 			
 				pars = []
 				for i in range(len(p0)):
-					pars.append(pymc3.Flat("p%d" % i, testval=p0[i]))
+					if np.any(np.isinf(bounds[:,i])):
+						pars.append(pymc3.Flat("p%d" % i, testval=p0[i]))
+					else:
+						pars.append(pymc3.Uniform("p%d" % i, lower=bounds[0,i], upper=bounds[1,i], testval=p0[i]))
 				xt = pymc3.Flat('true x', shape=x.shape, testval=x)
 				
 				xs = pymc3.Normal('x data', mu=xt, sd=data['dx'], observed=data['x'])
@@ -980,7 +984,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 				data[var].set_value(eval(var))
 		
 		with mcmodel:	
-			trace = pymc3.sample(nsamples, init='auto' if init else None, njobs=1, progressbar=print_info >= 1)
+			trace = pymc3.sample(nsamples, init='auto' if init else None, njobs=njobs, progressbar=print_info >= 1, **kw)
 			varnames = ["p%d" % i for i in range(len(p0))]
 			df = pymc3.trace_to_dataframe(trace, varnames=varnames)[varnames]
 			par = np.mean(df, axis=0)
@@ -1099,7 +1103,7 @@ class FitCurveBootstrapOutput:
 	def __init__(self):
 		pass
 
-def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method='auto', plot=dict(), eta=False, wavg=True, method_kw=None, **kw):
+def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method='auto', plot=dict(), eta=False, wavg=True, method_kw=None, full_output=False, **kw):
 	"""
 	Perform a bootstrap, i.e. given a curve model and datapoints with
 	uncertainties, generates random displacement to the data with normal
@@ -1204,6 +1208,9 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 	p0shape = [len(p0) for p0 in p0s]
 	fp = np.empty([len(methods), len(dxs), len(dys)] + p0shape + [len(p0s)]) # fitted parameters (mean over MC)
 	cp = np.empty([len(methods), len(dxs), len(dys)] + p0shape + 2 * [len(p0s)]) # fitted parameters mean covariance matrices
+	if full_output:
+		fp_mc = np.empty([len(methods), len(dxs), len(dys)] + p0shape + [len(p0s), mcn])
+		cp_mc = np.empty([len(methods), len(dxs), len(dys)] + p0shape + [len(p0s), len(p0s), mcn])
 	chisq = np.empty((mcn, len(methods))) # chisquares from 1 MC run
 	pars = np.empty((mcn, len(methods), len(p0s))) # parameters from 1 MC run
 	covs = np.empty((mcn, len(methods), len(p0s), len(p0s))) # covariance matrices from 1 MC run
@@ -1253,9 +1260,19 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 					
 					for j in range(len(methods)):
 						# fit
+						if methods[j] == 'postmean':
+							if i > 0:
+								d = dict(init=False, model=prevmodel)
+							else:
+								d = dict(init=True, model=None)
+							d.update(method_kw[j])
+						else:
+							d = method_kw[j]
 						start = time.time()
-						out = fit_curve(model, x, y, dx, dy, p0=p0, method=methods[j], **(method_kw[j]))
+						out = fit_curve(model, x, y, dx, dy, p0=p0, method=methods[j], **d)
 						end = time.time()
+						if method[j] == 'postmean':
+							prevmodel = out.model
 				
 						# save results
 						if plot.get('single', False):
@@ -1310,6 +1327,9 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 					else:
 						fp[(k, l, ll) + K] = pm[k]
 						cp[(k, l, ll) + K] = pc[k] / mcn
+					if full_output:
+						fp_mc[(k, l, ll) + K] = np.einsum('ij->ji', pars[:,k])
+						cp_mc[(k, l, ll) + K] = np.einsum('ijk->jki', covs[:,k])
 				
 				# plot
 				if plot.get('single', False):
@@ -1574,6 +1594,9 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 	if not (plot_vsds is None):
 		plotout['vsds'] = plot_vsds
 	out.plot = plotout
+	if full_output:
+		out.fp_mc = fp_mc
+		out.cp_mc = cp_mc
 	
 	return out
 

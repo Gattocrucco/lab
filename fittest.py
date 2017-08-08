@@ -22,10 +22,11 @@ fs = [ # sympy functions
 	lambda x, m: m * x,
 	lambda t, A, w, phi: A * sympy.sin(w * t + phi)
 ]
-f = fs[1] # function to fit
+f = fs[3] # function to fit
+bounds = [[-np.pi/2, -np.inf], [np.pi/2, np.inf]]
 
-mcn = 1000 # number of repetitions (monte carlo)
-methods = ['odrpack', 'linodr'] # ev, linodr, odrpack, ml, wleastsq, leastsq
+mcn = 100 # number of repetitions (monte carlo)
+methods = ['odrpack', 'postmean'] # ev, linodr, odrpack, ml, wleastsq, leastsq
 xmean = np.linspace(0, 10, 20) # true x
 n = len(xmean) # number of points
 dys = np.outer([2], np.ones(n)*.1) # errors, axis 0 = dataset, axis 1 = point
@@ -34,11 +35,17 @@ dxs = np.outer([10], np.ones(n)*.1)
 
 method_kw = []
 for m in methods:
-	method_kw.append(dict(max_cycles=50) if m == 'ev' else dict())
+	if m == 'ev':
+		d = dict(max_cycles=50)
+	elif m == 'postmean':
+		d = dict(nsamples=1000, print_info=1, init=True)
+	else:
+		d = dict()
+	method_kw.append(d)
 
 model = CurveModel(f, symb=True)
 plot = dict(single=showplot, vsp0=showpsplot, vsds=showpsdtplot)
-out = fit_curve_bootstrap(model, xmean, dxs=dxs, dys=dys, p0s=p0s, mcn=mcn, method=methods, plot=plot, eta=True, wavg=False, method_kw=method_kw)
+out = fit_curve_bootstrap(model, xmean, dxs=dxs, dys=dys, p0s=p0s, mcn=mcn, method=methods, plot=plot, eta=True, wavg=False, method_kw=method_kw, full_output=True, bounds=bounds)
 
 figs = []
 if showplot:
@@ -50,3 +57,6 @@ if showpsdtplot:
 for fig in figs:
 	fig.savefig(nextfilename(fig.canvas.get_window_title(), '.pdf', prepath='Figures'))
 	fig.show()
+
+data_file = nextfilename(str(model) + ' method(s) ' + ', '.join(methods), '.npz', prepath='Data')
+np.savez_compressed(data_file, fp_mc=out.fp_mc, cp_mc=out.cp_mc)
