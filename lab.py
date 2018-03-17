@@ -354,11 +354,13 @@ class CurveModel:
 	dfdpdx
 	"""
 
-	def __init__(self, f, symb=False, dfdx=None, dfdp=None, dfdpdx=None):
+	def __init__(self, f, symb=False, dfdx=None, dfdp=None, dfdpdx=None, npar=None):
 		if symb:
-			args = inspect.getargspec(f).args
+			if npar is None:
+				args = inspect.getargspec(f).args
+				npar = len(args) - 1
 			xsym = sympy.symbols('x', real=True)
-			psym = [sympy.symbols('p%s' % num2sub(i), real=True) for i in range(len(args) - 1)]
+			psym = [sympy.symbols('p%s' % num2sub(i), real=True) for i in range(npar)]
 			syms = [xsym] + psym
 			self._dfdx = sympy.lambdify(syms, f(*syms).diff(xsym), "numpy")
 			self._dfdps = [sympy.lambdify(syms, f(*syms).diff(p), "numpy") for p in psym]
@@ -367,6 +369,7 @@ class CurveModel:
 			self._f_sym = f
 			self._repr = 'CurveModel(y = %s)' % (str(f(*syms)).replace('**', '^').replace('*', '·'))
 			self._symb = True
+			self._npar = npar
 		else:
 			self._dfdx = dfdx
 			self._dfdp = dfdp
@@ -388,9 +391,8 @@ class CurveModel:
 			LaTeX representation of the object.
 		"""
 		if self._symb:
-			args = inspect.getargspec(self._f_sym).args
 			xsym = sympy.symbols('x', real=True)
-			psym = [sympy.symbols('p_{%d}' % i, real=True) for i in range(len(args) - 1)]
+			psym = [sympy.symbols('p_{%d}' % i, real=True) for i in range(self._npar)]
 			syms = [xsym] + psym
 			return sympy.latex(self._f_sym(*syms))
 		else:
