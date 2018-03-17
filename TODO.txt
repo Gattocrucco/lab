@@ -64,5 +64,3 @@ aggiungere opzione per mettere delle etichette allineate con la tabella, sceglie
 supportare array di unumpy anziché par, cov separati
 togliere % quando scrivo nan
 opzione per fare una tabella di latex
-
-aggiungere unicode_sigma

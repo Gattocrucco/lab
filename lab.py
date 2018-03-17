@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # ********************** IMPORTS ***************************
 
 from __future__ import division, print_function
@@ -2484,6 +2485,7 @@ def xep(x, e, pm=None, comexp=True, nicexp=False):
 	return _util_format_vect(x, e, pm, True, comexp, nicexp)
 
 unicode_pm = u'±'
+unicode_sigma = u'σ'
 
 # this function taken from stackoverflow and modified
 # http://stackoverflow.com/questions/17973278/python-decimal-engineering-notation-for-mili-10e-3-and-micro-10e-6
