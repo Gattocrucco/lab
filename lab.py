@@ -734,10 +734,9 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 		procedure of 'wleastsq' many times, using the estimated parameters
 		at an iteration to propagate the uncertainties on x to
 		uncertainties on y for the next iteration. The keyword argument
-		'max_cycles' set a limit on the number of iterations; an exception
-		is raised if the limit is surpassed; 'conv_diff' set the relative
-		difference between successive estimates (both values and
-		covariance) that stops the cycle; 'diff_step' is used as in
+		'max_cycles' set a limit on the number of iterations; 'conv_diff'
+		set the relative difference between successive estimates (both values
+		and covariance) that stops the cycle; 'diff_step' is used as in
 		'linodr'. Other keyword arguments are passed to
 		scipy.optimize.curve_fit. The output object has a member 'cycles'
 		which is the number of cycles done.
@@ -1018,8 +1017,8 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 		par, cov = optimize.curve_fit(f, x, y, p0=p0[pfree], absolute_sigma=absolute_sigma, jac=jac, bounds=bounds, **kw)
 		par, cov, cycles = _fit_curve_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, jac=jac, bounds=bounds, **kw)
 		
-		if cycles == -1:
-			raise RuntimeError('Maximum number (%d) of fit cycles reached' % max_cycles)
+		# if cycles == -1:
+		# 	raise RuntimeError('Maximum number (%d) of fit cycles reached' % max_cycles)
 	
 		if full_output:
 			deriv = dfdx(x, *par)
@@ -1103,7 +1102,8 @@ class FitCurveBootstrapOutput:
 	def __init__(self):
 		pass
 
-def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method='auto', plot=dict(), eta=False, wavg=True, method_kw=None, full_output=False, **kw):
+def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method='auto', plot=dict(), eta=False, wavg=True, sdmean=True, method_kw=None, full_output=False, **kw):
+	# TODO finire di implementare sdmean (labels dei grafici)
 	"""
 	Perform a bootstrap, i.e. given a curve model and datapoints with
 	uncertainties, generates random displacement to the data with normal
@@ -1326,7 +1326,7 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 						cp[(k, l, ll) + K] = wpc[k]
 					else:
 						fp[(k, l, ll) + K] = pm[k]
-						cp[(k, l, ll) + K] = pc[k] / mcn
+						cp[(k, l, ll) + K] = pc[k] / (mcn if sdmean else 1)
 					if full_output:
 						fp_mc[(k, l, ll) + K] = np.einsum('ij->ji', pars[:,k])
 						cp_mc[(k, l, ll) + K] = np.einsum('ijk->jki', covs[:,k])
@@ -1455,8 +1455,8 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 								X = (pars[:,:,i] - p0[i]) / ps[:,i].reshape(1,-1)
 								Y = (pars[:,:,j] - p0[j]) / ps[:,j].reshape(1,-1)
 							if len(X) > maxscatter:
-								X = X[::int(ceil(len(X) / maxscatter)),:]
-								Y = Y[::int(ceil(len(Y) / maxscatter)),:]
+								X = X[::int(np.ceil(len(X) / maxscatter)),:]
+								Y = Y[::int(np.ceil(len(Y) / maxscatter)),:]
 							for k in range(len(methods)):
 								ax.plot(X[:,k], Y[:,k], '.', markersize=3, alpha=0.35)
 							ax.grid()
@@ -1572,10 +1572,11 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
 						ax.set_ylabel('$\\langle p_{%d,i}\\rangle-p_{%d}$ $(\\pm\\sigma_{%d}/\\sqrt{N})$' % (i, i, i))
 				for k in range(len(methods)):
 					sel = (k,) + ds[j][4] + tuple([0] * len(p0s)) + (i,)
-					Y = fp[sel] - np.asarray(p0s[i])
+					Y = fp[sel] - np.asarray(p0s[i]) # TODO p0s[i] ??
 					DY = np.sqrt(cp[sel + (i,)])
-					pvalue = stats.chi2.sf(sum((Y / DY)**2), len(Y))
-					ax.errorbar(np.sqrt((ds[j][0]**2).sum(axis=-1) / n), Y, DY, fmt='.', markersize=2, label='%s, p = %.2g' % (methods[k], pvalue))
+					mDY = DY if sdmean else DY / np.sqrt(mcn)
+					pvalue = stats.chi2.sf(sum((Y / mDY)**2), len(Y))
+					ax.errorbar(np.sqrt((ds[j][0]**2).sum(axis=-1) / n), Y, DY, fmt='.', markersize=2, label='%s, p = %.2g' % (methods[k], pvalue), capsize=2)
 				ax.legend(loc=1, fontsize='small')
 				ax.grid()
 		
