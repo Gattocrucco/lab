@@ -39,14 +39,6 @@ __all__ = [ # things imported when you do "from lab import *"
 	'sanitizefilename'
 ]
 
-# __all__ += [ # things for backward compatibility
-# 	'curve_fit_patched',
-# 	'fit_generic_xyerr',
-# 	'fit_generic_xyerr2',
-#	'etastart',
-#	'etastr'
-# ]
-
 __version__ = '2017.05'
 
 # ************************** FIT ***************************
@@ -2846,34 +2838,3 @@ def nextfilename(base, ext, idxfmt='%02d', prepath=None, start=1, sanitize=True)
 			break
 		i += 1
 	return filename
-
-# ************************ COMPATIBILITY ****************************
-
-def fit_generic_xyerr(f, dfdx, x, y, sigmax, sigmay, p0=None, print_info=False, absolute_sigma=True, conv_diff=0.001, max_cycles=5, **kw):
-	"""
-	THIS FUNCTION IS DEPRECATED
-	"""
-	model = CurveModel(f, dfdx=dfdx, symb=False)
-	return fit_curve(model, x, y, dx=sigmax, dy=sigmay, p0=p0, absolute_sigma=absolute_sigma, print_info=print_info, method='ev', conv_diff=conv_diff, max_cycles=max_cycles, **kw)
-
-def fit_generic_xyerr2(f, x, y, sigmax, sigmay, p0=None, print_info=False, absolute_sigma=True):
-	"""
-	THIS FUNCTION IS DEPRECATED
-	"""
-	model = CurveModel(f, symb=False)
-	return fit_curve(model, x, y, dx=sigmax, dy=sigmay, p0=p0, absolute_sigma=absolute_sigma, print_info=print_info, method='odrpack')
-
-curve_fit_patched = optimize.curve_fit
-
-def etastart():
-	"""
-	THIS FUNCTION IS DEPRECATED
-	"""
-	return Eta()
-
-def etastr(eta, progress, mininterval=np.inf):
-	"""
-	THIS FUNCTION IS DEPRECATED
-	"""
-	eta.etaprint(progress, mininterval=mininterval)
-	return util_timestr(time.time() - eta._start_time), eta.etastr(progress)

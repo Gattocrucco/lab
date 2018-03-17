@@ -10,7 +10,7 @@ fare un summary che printa la matrice di covarianza di par e, nel caso di errori
 
 CurveModel
 verificare se il modello simbolico è del tipo p_i*h_i(x) (hessiana nulla)
-aggiungere npar (da compton)
+far funzionare con i metodi come funzione (problema con l'argomento self)
 
 util_format
 opzione si=True per formattare come num2si
@@ -23,9 +23,6 @@ sostituire conv_diff con epsrel e epsabs
 fit_linear
 avere un output tipo fit_curve con il chi quadro
 inf se gli metto due punti!!
-
-_apply_pfree_par_cov
-bug risolto in compton
 
 fit_curve
 bug pfix in linodr (risolto in compton)
