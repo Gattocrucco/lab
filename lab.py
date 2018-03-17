@@ -10,6 +10,7 @@ from scipy import odr, optimize, stats, special, linalg
 import os
 import sympy
 import uncertainties
+from uncertainties import unumpy
 import copy
 
 __all__ = [ # things imported when you do "from lab import *"
@@ -2596,25 +2597,40 @@ def num2sup(x, format=None):
         x = x.replace(_subscrc[i], _supscr[i])
     return x
 
-def format_par_cov(par, cov):
+def format_par_cov(par, cov=None):
     """
     Format an estimate with a covariance matrix as an upper
-    triangular matrix with parameters on the diagonal (with
+    triangular matrix with values on the diagonal (with
     uncertainties) and correlations off-diagonal.
     
     Parameters
     ----------
     par : M-length array
-        Parameters to be written on the diagonal.
-    cov : (M, M) matrix
-        Covariance from which uncertainties and correlations
-        are computed.
+        Values to be written on the diagonal
+    cov : (M, M) matrix or None
+        Covariance matrix from which uncertainties and correlations
+        are computed. If None, a covariance matrix is extracted
+        from par with uncertainties.covariance_matrix(par).
+    
+    Returns
+    -------
+    matrix : TextMatrix
+        A TextMatrix instance. Can be converted to a string with str().
+        Has a method latex() to format as a LaTeX table.
     
     Examples
     --------
     >>> out = fit_curve(f, x, y, ...)
     >>> print(format_par_cov(out.par, out.cov))
+    or, briefly:
+    >>> format_par_cov(out.upar)
+    Generate a LaTeX table:
+    >>> print(format_par_cov(out.upar).latex())
     """
+    upar = par
+    par = unumpy.nominal_values(upar)
+    if cov is None:
+        cov = uncertainties.covariance_matrix(upar)
     pars = xe(par, np.sqrt(np.diag(cov)))
     corr = fit_norm_cov(cov) * 100
     matrix = []
@@ -2684,7 +2700,7 @@ class TextMatrix(Matrix):
         return s
     
     def latex(self):
-        return self.text(before='', after='', between=' & ', newline=' \\\\\n')
+        return self.text(before='', after='', between=' & ', newline=' \\\\\n').replace('%', '\\%')
     
 # ************************** TIME *********************************
 

@@ -62,5 +62,3 @@ altro problema di ODRPACK: out.y != y + out.eps, è una cosa tutta calcolata den
 format_par_cov
 aggiungere opzione per mettere delle etichette allineate con la tabella, scegliendo se in alto, a sinistra o entrambi (inizialmente solo in alto)
 supportare array di unumpy anziché par, cov separati
-togliere % quando scrivo nan
-opzione per fare una tabella di latex
