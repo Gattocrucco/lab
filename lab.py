@@ -621,13 +621,19 @@ def _apply_pfree(f, pfree, p0):
 	else:
 		return f
 
+def _apply_pfree_list(f_list, pfree, p0):
+	if not (f_list is None) and not all(pfree):
+		return [_apply_pfree(f_list[i], pfree, p0) for i in np.arange(len(f_list), dtype=int)[pfree]]
+	else:
+		return f_list
+
 def _apply_pfree_par_cov(par, cov, pfree, p0):
 	if not all(pfree):
 		n_par = np.empty(len(p0), dtype=par.dtype)
 		n_par[pfree] = par
-		n_par[~pfree] = p0
+		n_par[~pfree] = p0[~pfree]
 		n_cov = np.zeros([len(p0)] * 2, dtype=cov.dtype)
-		n_cov[np.outer(pfree, pfree)] = cov
+		n_cov[np.outer(pfree, pfree)] = cov[np.ones(cov.shape, dtype=bool)]
 		return n_par, n_cov
 	else:
 		return par, cov
@@ -861,8 +867,8 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 	elif method == 'linodr':
 		f = _apply_pfree(model.f(), pfree, p0)
 		dfdx = _apply_pfree(model.dfdx(), pfree, p0)
-		dfdps = _apply_pfree(model.dfdps(), pfree, p0)
-		dfdpdxs = _apply_pfree(model.dfdpdxs(), pfree, p0)
+		dfdps = _apply_pfree_list(model.dfdps(), pfree, p0)
+		dfdpdxs = _apply_pfree_list(model.dfdpdxs(), pfree, p0)
 		dfdp = _apply_pfree(model.dfdp(len(x)), pfree, p0)
 		dfdpdx = _apply_pfree(model.dfdpdx(len(x)), pfree, p0)
 		
@@ -914,7 +920,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
 	elif method == 'ml':
 		f = _apply_pfree(model.f(), pfree, p0)
 		dfdx = _apply_pfree(model.dfdx(), pfree, p0)
-		dfdps = _apply_pfree(model.dfdps(), pfree, p0)
+		dfdps = _apply_pfree_list(model.dfdps(), pfree, p0)
 		dfdp = _apply_pfree(model.dfdp(len(x)), pfree, p0)
 		
 		x = np.asarray(x)
