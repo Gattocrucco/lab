@@ -31,7 +31,9 @@ __all__ = [ # things imported when you do "from lab import *"
     'num2sup',
     'num2sub',
     'unicode_pm',
+    'unicode_sigma',
     'format_par_cov',
+    'TextMatrix',
     'xe',
     'xep',
     'util_format',
@@ -98,6 +100,17 @@ class _Nonedict(dict):
             if not (kw[k] is None):
                 self[k] = kw[k]
 
+def _least_squares_cov(result):
+    """
+    code copied from curve_fit
+    guess it is linear model approximation with svd cut and pseudoinverse
+    """
+    _, s, VT = linalg.svd(result.jac, full_matrices=False)
+    threshold = np.finfo(float).eps * max(result.jac.shape) * s[0]
+    s = s[s > threshold]
+    VT = VT[:s.size]
+    return np.dot(VT.T / s**2, VT)    
+
 def _fit_curve_odr(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, dfdp=None, dfdpdx=None, **kw):
     dy2 = dy**2
     dx2 = dx**2
@@ -121,11 +134,7 @@ def _fit_curve_odr(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, dfd
     kw.update(_Nonedict(jac=jac))
     result = optimize.least_squares(fun, p0, **kw)
     par = result.x
-    _, s, VT = linalg.svd(result.jac, full_matrices=False)
-    threshold = np.finfo(float).eps * max(result.jac.shape) * s[0]
-    s = s[s > threshold]
-    VT = VT[:s.size]
-    cov = np.dot(VT.T / s**2, VT)
+    cov = _least_squares_cov(result)
     return par, cov, result
 
 def _fit_curve_ml(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdp=None, bounds=None, **kw):
@@ -160,11 +169,7 @@ def _fit_curve_ml(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdp=None, bounds=
     kw.update(_Nonedict(jac=jac, bounds=bnds))
     result = optimize.least_squares(fun, np.concatenate((p0, x)), x_scale=px_scale, **kw)
     par = result.x
-    _, s, VT = linalg.svd(result.jac, full_matrices=False)
-    threshold = np.finfo(float).eps * max(result.jac.shape) * s[0]
-    s = s[s > threshold]
-    VT = VT[:s.size]
-    cov = np.dot(VT.T / s**2, VT)
+    cov = _least_squares_cov(result)
     return par, cov, result
 
 def _asarray(a):
@@ -178,11 +183,11 @@ class FitCurveOutput:
     Parameters
     ----------
     par, cov, px, pxcov, datax, datay, fitx, fity, chisq, deltax, deltay,
-    method, rawoutput :
+    method, rawoutput, success :
         These parameters coincide with members (see their description).
-    nump : positive integer or None
+    npar : positive integer or None
         Number of parameters. If px or pxcov are given but not one of datax,
-        deltax, datay, deltay, fity, then nump shall be specified.
+        deltax, datay, deltay, fity, then npar shall be specified.
     check : bool
         If True, perform some consistency checks.
     
@@ -191,13 +196,18 @@ class FitCurveOutput:
     par : 1D array
         Estimate of the parameters.
     cov : 2D array
-        Covariance matrix of the estimate.
+        Estimate of the covariance matrix of par.
     px : 1D array
         Estimate of parameters, including x (for fits with uncertainties
         along x). The format is:
-        [p0, ..., pn, x1, ..., xm]
+        [p0, ..., pn, x1, ..., xm].
     pxcov : 2D array
-        Covariance matrix of px.
+        Estimate of the covariance matrix of px.
+    upar, upx : 1D array
+        par and px combined with cov and pxcov with the uncertainties
+        module, with
+        >>> upar = uncertainties.correlated_values(par, cov)
+        and similarly for upx.
     datax :
         x data. For fits with uncertainties along x, it is a 1D array.
     datay : 1D array
@@ -225,21 +235,24 @@ class FitCurveOutput:
     rawoutput : object
         Object returned by fitting function of lower level than fit_curve,
         if any (tipically a minimizer), see fit_curve.
+    success : bool
+        If True, the result is believed to be correctly computed. If False,
+        the result may be nonsensical.
     """
     
-    def __init__(self, par=None, cov=None, px=None, pxcov=None, nump=None, datax=None, datay=None, fitx=None, fity=None, deltax=None, deltay=None, chisq=None, method=None, rawoutput=None, check=True):
+    def __init__(self, par=None, cov=None, px=None, pxcov=None, npar=None, datax=None, datay=None, fitx=None, fity=None, deltax=None, deltay=None, chisq=None, method=None, rawoutput=None, check=True, success=True):
         if not (px is None and pxcov is None):
             A = np.array([datax, deltax, datay, deltay, fity], dtype=object)
             Anone = np.array([a is None for a in A], dtype=bool)
-            if nump is None and not all(Anone):
-                nump = -len(A[~Anone][0])
+            if npar is None and not all(Anone):
+                npar = -len(A[~Anone][0])
             else:
-                raise ValueError("You should specify nump")
+                raise ValueError("You should specify npar")
         
         if not (px is None):
             self.px = np.asarray(px)
-            self.par = self.px[:nump]
-            self.fitx = self.px[nump:]
+            self.par = self.px[:npar]
+            self.fitx = self.px[npar:]
             if check:
                 assert par is None
                 assert fitx is None
@@ -249,7 +262,7 @@ class FitCurveOutput:
             
         if not (pxcov is None):
             self.pxcov = np.asarray(pxcov)
-            self.cov = self.pxcov[:nump,:nump]
+            self.cov = self.pxcov[:npar,:npar]
             if check:
                 assert cov is None
         else:
@@ -304,7 +317,7 @@ class FitCurveOutput:
                 self.chisq_pvalue = stats.chi2.sf(self.chisq, self.chisq_dof)
         
         self.rawoutput = rawoutput
-        
+        self.success = success
         self.method = method
 
 class CurveModel:
@@ -321,7 +334,7 @@ class CurveModel:
     symb : bool
         If True, derivatives of f respect to x and *par are obtained as
         needed with sympy. In this case, f must accept sympy variables as
-        arguments, and return a sympy expression.
+        arguments, and return a sympy expression in that case.
     dfdx : function, optional
         A function with the same signature as f. Returns the derivative of
         f respect to x.
@@ -334,12 +347,17 @@ class CurveModel:
         derivatives of f respect to x and *par, in the form of a 2D array
         where the first index runs along the datapoints and the second
         along the parameters.
+    npar : integer, optional
+        If the number of parameters can not be automatically inferred from
+        the function, you must specify it through this argument.
+        
     
     Methods
     -------
     latex
     f
     f_odrpack
+    f_pymc3
     dfdx
     dfdx_odrpack
     dfdps
@@ -405,11 +423,16 @@ class CurveModel:
         return self._f
     
     def f_pymc3(self):
+        """
+        Convert the model function to the format of pymc3 (theano).
+        Available only if symb=True, raises an exception if not.
+        """
         if self._symb:
             import pymc3
-            args = inspect.getargspec(self._f_sym).args
-            syms = sympy.symbols("x:%d" % len(args), real=True)
+            syms = sympy.symbols("x:%d" % self._npar, real=True)
             return sympy.lambdify(syms, self._f_sym(*syms), modules=pymc3.math)
+        else:
+            raise ValueError('model function is not simbolic, can not convert to pymc3')
 
     def f_odrpack(self, length):
         """
@@ -633,7 +656,7 @@ def _apply_pfree_par_cov(par, cov, pfree, p0):
     else:
         return par, cov
 
-def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolute_sigma=True, method='auto', print_info=0, full_output=True, check=True, **kw):
+def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolute_sigma=True, method='auto', print_info=0, full_output=True, check=True, raises=None, **kw):
     """
     Fit a curve in the form:
     y = f(x, *par)
@@ -685,6 +708,10 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
         If False, return less information.
     check : bool
         If False, avoid some consistency checks.
+    raises : bool or None
+        If True, raise an exception if the fit fails. In some cases,
+        an exception is raised even if raises=False. If None, raises
+        is set to True if print_info <= 0 and to False if print_info >= 1.
     
     Keyword arguments
     -----------------
@@ -695,6 +722,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
     ---------------
     All the methods perform a maximum-likelihood fit assuming normal (i.e.
     gaussian) uncertainties.
+    # TODO doc method <pymc3>
     'auto' :
         Choose automatically an appropriate method, based on the values of
         dx, dy, bounds given.
@@ -761,37 +789,53 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
         print('################ fit_curve ################')
         print()
     
+    if raises is None:
+        raises = print_info < 1
+    
     ##### MODEL #####
 
+    # check and sanitize p0
+    if p0 is None:
+        raise ValueError("p0 must be specified")
+    p0 = np.atleast_1d(p0)
+    
+    # check and sanitize pfix
+    if not (pfix is None):
+        pfix = np.atleast_1d(pfix)
+        if np.issubdtype('bool', pfix.dtype):
+            if len(pfix) != len(p0):
+                raise ValueError('length of pfix ({}) different from length of p0 ({})'.format(len(pfix), len(p0)))
+            pfree = ~pfix
+        elif np.issubdtype('int', pfix.dtype) or np.issubdtype('uint', pfix.dtype):
+            pfree = np.ones(len(p0), dtype=bool)
+            pfree[pfix] = False
+        elif len(pfix) == 0:
+            pfree = np.ones(len(p0), dtype=bool)
+        else:
+            raise ValueError('pfix must be either None, an array of booleans or an array of integers')
+    else:
+        pfree = np.ones(len(p0), dtype=bool)
+    
+    # check and sanitize bounds, apply pfix
+    if not (bounds is None):
+        bounds = np.asarray(bounds).reshape(2,-1)[:,pfree]
+        banal_bounds = all(bounds[0] == -np.inf) and all(bounds[1] == np.inf)
+    else:
+        bounds = np.array([[-np.inf] * len(p0), [np.inf] * len(p0)])[:,pfree]
+        banal_bounds = True
+
+    # check or create model
     if isinstance(f, CurveModel):
         model = f
         if print_info >= 1:
             print('Model given: {}'.format(model))
             print()
     else:
-        model = CurveModel(f, symb=False)
+        model = CurveModel(f, symb=False, npar=len(p0))
         if print_info >= 1:
             print('Model created from f: {}'.format(model))
             print()
     
-    if p0 is None:
-        raise ValueError("p0 must be specified")
-    p0 = np.atleast_1d(p0)
-    if not (pfix is None):
-        pfix = np.asarray(pfix)
-        if np.issubdtype('bool', pfix.dtype):
-            pfree = ~pfix
-        elif np.issubdtype('int', pfix.dtype) or np.issubdtype('uint', pfix.dtype):
-            pfree = np.ones(len(p0), dtype=bool)
-            pfree[pfix] = False
-    else:
-        pfree = np.ones(len(p0), dtype=bool)
-    
-    if not (bounds is None):
-        bounds = np.asarray(bounds).reshape(2,-1)[:,pfree]
-    else:
-        bounds = np.array([[-np.inf] * len(p0), [np.inf] * len(p0)])[:,pfree]
-
     ##### METHOD #####
     
     if method == 'auto':
@@ -799,7 +843,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
             method = 'linodr' # only linodr supports errors only along x
         elif dy is None:
             method = 'leastsq'
-        elif bounds is None or (all(bounds[0] == -np.inf) and all(bounds[1] == np.inf)):
+        elif banal_bounds:
             method = 'odrpack' # generally good method but does not support bounds
         elif dx is None:
             method = 'wleastsq'
@@ -815,10 +859,12 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
     ##### ODRPACK #####
     
     if method == 'odrpack':
+        # obtain functions
         fcn = model.f_odrpack(len(x))
         fjacb = model.dfdp_odrpack(len(x))
         fjacd = model.dfdx_odrpack(len(x))
         
+        # run odr
         M = odr.Model(fcn, fjacb=fjacb, fjacd=fjacd)
         data = odr.RealData(x, y, sx=dx, sy=dy)
         ODR = odr.ODR(data, M, beta0=p0, ifixb=pfree, **kw)
@@ -829,50 +875,54 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
         ip_iter = max(0, min(print_info - 2, 2))
         ODR.set_iprint(init=ip_init, iter=ip_iter, final=ip_final, iter_step=10)
         output = ODR.run()
+        
+        # check success
+        success = output.info <= 3
+        if raises and not success:
+            raise RuntimeError('odrpack reports fit failure, reason: {}'.format(', '.join(output.stopreason)))
+        
+        # construct output
         par = output.beta
         cov = output.cov_beta
-        
-        if full_output or not absolute_sigma:
-            if not (dx is None) and not (dy is None):
-                chisq = np.sum((output.eps / np.asarray(dy))**2 + (output.delta / np.asarray(dx))**2)
-            elif dx is None and not (dy is None):
-                chisq = np.sum((output.eps / np.asarray(dy))**2)
-            elif dx is None and dy is None:
-                chisq = np.sum(output.eps ** 2)
+        chisq = output.sum_square
         if not absolute_sigma:
             cov *= chisq / (len(x) - len(par))
+        kwargs = dict(par=par, cov=cov, chisq=chisq, check=check, success=success)
         if full_output:
-            if dx is None:
-                out = FitCurveOutput(par=par, cov=cov, chisq=chisq, deltay=output.eps, datax=x, datay=y, fity=output.y, rawoutput=output, method=method, check=False)
-            else:
-                out = FitCurveOutput(par=par, cov=cov, chisq=chisq, deltax=output.delta, deltay=output.eps, datax=x, datay=y, fitx=output.xplus, fity=output.y, rawoutput=output, method=method, check=False)
+            kwargs.update(deltay=output.eps, datax=x, datay=y, fity=output.y, rawoutput=output, method=method, check=False)
             # (!) check=False because ODRPACK may return slightly inconsistent fity, deltay; the problem is in ODRPACK itself, not in the wrapper. Anyway, inconsistencies are reasonable, so we just look away.
-        else:
-            out = FitCurveOutput(par=par, cov=cov, check=check)
+            if not (dx is None):
+                kwargs.update(deltax=output.delta, fitx=output.xplus)
+        out = FitCurveOutput(**kwargs)
+        
+        # print result
         if print_info >= 1:
             if print_info > 1:
                 print()
             else:
-                print(output.stopreason)
+                print('stopping reason: {}'.format(', '.join(output.stopreason)))
             print('Result:')
             print(format_par_cov(par, cov))
 
     ##### LINEARIZED ODR #####
 
-    elif method == 'linodr':
+    elif method == 'linodr' or method.startswith('linodr-'):
+        # obtain functions
         f = _apply_pfree(model.f(), pfree, p0)
         dfdx = _apply_pfree(model.dfdx(), pfree, p0)
         dfdps = _apply_pfree_list(model.dfdps(), pfree, p0)
         dfdpdxs = _apply_pfree_list(model.dfdpdxs(), pfree, p0)
-        dfdp = _apply_pfree(model.dfdp(len(x)), pfree, p0)
-        dfdpdx = _apply_pfree(model.dfdpdx(len(x)), pfree, p0)
+        dfdp = _apply_pfree(model.dfdp(len(x)), pfree, p0) if dfdps is None else None # TODO bug if pfree non-banal
+        dfdpdx = _apply_pfree(model.dfdpdx(len(x)), pfree, p0) if dfdpdxs is None else None # also here
         
+        # eventually make step-forward derivative
         if dfdx is None:
             diff_step = kw.get('diff_step', 1e-8)
             def dfdx(x, *p):
                 h = x * diff_step + diff_step
                 return (f(x + h, *p) - f(x, *p)) / h
         
+        # sanitize input
         x = _asarray(x)
         y = np.asarray(y)
         dx = _asarray(dx)
@@ -881,27 +931,37 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
             dx = 0
         if dy is None:
             dy = 0
-            
-        verbosity = max(0, min(print_info - 1, 2))
         
+        # run fit
+        verbosity = max(0, min(print_info - 1, 2))
+        submethod = method[len('linodr-'):]
+        has_submethod = submethod != ''
+        if has_submethod:
+            kw.update(method=submethod)
         par, cov, output = _fit_curve_odr(f, x, y, dx, dy, p0[pfree], dfdx=dfdx, dfdps=dfdps, dfdpdxs=dfdpdxs, dfdp=dfdp, dfdpdx=dfdpdx, verbose=verbosity, bounds=bounds, **kw)
         
-        if full_output or not absolute_sigma:
-            deriv = dfdx(x, *par)
-            err2 = dy ** 2   +   deriv ** 2  *  dx ** 2
-            chisq = np.sum((y - f(x, *par))**2 / err2)
+        # check success
+        success = output.success
+        if raises and not success:
+            raise RuntimeError('least_squares reports fit failure, reason: {}'.format(output.message))
+        
+        # construct output
+        chisq = 2 * output.cost
         if not absolute_sigma:
             cov *= chisq / (len(x) - len(par))
         if full_output:
+            deriv = dfdx(x, *par)
+            err2 = dy ** 2   +   deriv ** 2  *  dx ** 2
             fact = (y - f(x, *par)) / err2
             deltax = fact * deriv * dx**2
             deltay = -fact * dy**2
-            par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
-            out = FitCurveOutput(par=par, cov=cov, chisq=chisq, deltax=deltax, deltay=deltay, datax=x, datay=y, method=method, rawoutput=output, check=check)
-        else:
-            par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
-            out = FitCurveOutput(par=par, cov=cov, check=check)
+        par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
+        kwargs = dict(par=par, cov=cov, chisq=chisq, check=check, success=success)
+        if full_output:
+            kwargs.update(deltax=deltax, deltay=deltay, datax=x, datay=y, method=method, rawoutput=output)
+        out = FitCurveOutput(**kwargs)
         
+        # print result
         if print_info >= 1:
             if print_info > 1:
                 print()
@@ -913,33 +973,39 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
     ##### FULL-FEATURE MAXIMUM LIKELIHOOD #####
     
     elif method == 'ml':
+        # obtain functions
         f = _apply_pfree(model.f(), pfree, p0)
         dfdx = _apply_pfree(model.dfdx(), pfree, p0)
         dfdps = _apply_pfree_list(model.dfdps(), pfree, p0)
-        dfdp = _apply_pfree(model.dfdp(len(x)), pfree, p0)
+        dfdp = _apply_pfree(model.dfdp(len(x)), pfree, p0) if dfdps is None else None # TODO bug if pfree non-banal
         
+        # sanitize input
         x = np.asarray(x)
         y = np.asarray(y)
         dx = np.asarray(dx)
         dy = np.asarray(dy)
         
+        # run fit
         verbosity = max(0, min(print_info - 1, 2))
-        
         px, pxcov, output = _fit_curve_ml(f, x, y, dx, dy, p0[pfree], dfdx=dfdx, dfdps=dfdps, dfdp=dfdp, verbose=verbosity, bounds=bounds, **kw)
         
-        if full_output or not absolute_sigma:
-            par = px[:len(p0[pfree])]
-            xstar = px[-len(x):]
-            chisq = np.sum(((y - f(xstar, *par)) / dy)**2) + np.sum(((xstar - x) / dx) ** 2)
-        if not absolute_sigma:
-            pxcov *= chisq / (len(y) - len(par))
-        if full_output:
-            px, pxcov = _apply_pfree_par_cov(px, pxcov, np.concatenate((pfree, np.ones(len(x), dtype=bool))), p0)
-            out = FitCurveOutput(px=px, pxcov=pxcov, datax=x, datay=y, chisq=chisq, method=method, rawoutput=output, check=check)
-        else:
-            px, pxcov = _apply_pfree_par_cov(px, pxcov, np.concatenate((pfree, np.ones(len(x), dtype=bool))), p0)
-            out = FitCurveOutput(px=px, pxcov=pxcov, nump=len(p0), check=check)
+        # check success
+        success = output.success
+        if raises and not success:
+            raise RuntimeError('least_squares reports fit failure, reason: {}'.format(output.message))
         
+        # construct output
+        chisq = 2 * output.cost
+        if not absolute_sigma:
+            par = px[:len(p0[pfree])]
+            pxcov *= chisq / (len(y) - len(par))
+        px, pxcov = _apply_pfree_par_cov(px, pxcov, np.concatenate([pfree, np.ones(len(x), dtype=bool)]), np.concatenate([p0, x]))
+        kwargs = dict(px=px, pxcov=pxcov, chisq=chisq, npar=len(p0), check=check, success=success)
+        if full_output:
+            kwargs.update(datax=x, datay=y, method=method, rawoutput=output)
+        out = FitCurveOutput(**kwargs)
+        
+        # print result
         if print_info >= 1:
             if print_info > 1:
                 print()
@@ -950,7 +1016,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
     
     ##### POSTERIOR MEAN #####
     
-    elif method == 'postmean':
+    elif method == 'pymc3':
         import pymc3, theano
         
         mcmodel = kw.pop('model', None)
@@ -997,19 +1063,22 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
     
     ##### EFFECTIVE VARIANCE #####
     
-    elif method == 'ev':
+    elif method == 'ev' or method.startswith('ev-'):
+        # obtain functions
         f = _apply_pfree(model.f(), pfree, p0)
         dfdx = _apply_pfree(model.dfdx(), pfree, p0)
-        jac = _apply_pfree(model.dfdp_curve_fit(len(x)), pfree, p0)
+        jac = _apply_pfree(model.dfdp_curve_fit(len(x)), pfree, p0) # TODO bug if pfree non-banal
         conv_diff = kw.pop('conv_diff', 1e-7)
         max_cycles = kw.pop('max_cycles', 5)
         
+        # eventually make step-forward derivative
         if dfdx is None:
-            diff_step = kw.get('diff_step', np.finfo('float64').eps * 65536)
+            diff_step = kw.get('diff_step', 1e-8)
             def dfdx(x, *p):
                 h = x * diff_step + diff_step
                 return (f(x + h, *p) - f(x, *p)) / h
         
+        # sanitize input
         x = _asarray(x)
         y = np.asarray(y)
         dx = _asarray(dx)
@@ -1017,12 +1086,29 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
         if dx is None:
             dx = 0
         
-        par, cov = optimize.curve_fit(f, x, y, p0=p0[pfree], absolute_sigma=absolute_sigma, jac=jac, bounds=bounds, **kw)
-        par, cov, cycles = _fit_curve_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, jac=jac, bounds=bounds, **kw)
+        # run fit
+        try:
+            submethod = method[len('ev-'):]
+            has_submethod = submethod != ''
+            if not banal_bounds or (has_submethod and submethod != 'lm'):
+                verbosity = max(0, min(print_info - 1, 2))
+                kw.update(verbose=verbosity)
+            if has_submethod:
+                kw.update(method=submethod)
+            par, cov = optimize.curve_fit(f, x, y, p0=p0[pfree], absolute_sigma=absolute_sigma, jac=jac, bounds=bounds, check_finite=check, **kw)
+            par, cov, cycles = _fit_curve_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, jac=jac, bounds=bounds, check_finite=check, **kw)
+        except RuntimeError, OptimizeWarning:
+            success = False
+            if raises:
+                raise
+        else:
+            success = True
         
-        # if cycles == -1:
-        #     raise RuntimeError('Maximum number (%d) of fit cycles reached' % max_cycles)
-    
+        # check success
+        if raises and cycles == -1:
+            raise RuntimeError('Maximum number (%d) of fit cycles reached' % max_cycles)
+        
+        # construct output
         if full_output:
             deriv = dfdx(x, *par)
             err2 = dy ** 2   +   deriv ** 2  *  dx ** 2
@@ -1030,13 +1116,14 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
             fact = (y - f(x, *par)) / err2
             deltax = fact * deriv * dx**2
             deltay = -fact * dy**2
-            par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
-            out = FitCurveOutput(par=par, cov=cov, datax=x, datay=y, chisq=chisq, method=method, check=check, deltax=deltax, deltay=deltay)
-            out.cycles = cycles
-        else:
-            par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
-            out = FitCurveOutput(par=par, cov=cov, check=check)
-    
+        par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
+        kwargs = dict(par=par, cov=cov, check=check, success=success)
+        if full_output:
+            kwargs.update(datax=x, datay=y, chisq=chisq, method=method, deltax=deltax, deltay=deltay)
+        out = FitCurveOutput(**kwargs)
+        out.cycles = cycles
+        
+        # print result
         if print_info >= 1:
             print('Cycles: %d' % cycles)
             print('Result:')
@@ -1044,47 +1131,83 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
     
     ##### WEIGHTED LEAST SQUARES #####
     
-    elif method == 'wleastsq':
+    elif method == 'wleastsq' or method.startswith('wleastsq-'):
+        # obtain functions
         f = _apply_pfree(model.f(), pfree, p0)
-        jac = _apply_pfree(model.dfdp_curve_fit(len(x)), pfree, p0)
+        jac = _apply_pfree(model.dfdp_curve_fit(len(x)), pfree, p0) # TODO bug if pfree non-banal
         
-        par, cov = optimize.curve_fit(f, x, y, sigma=dy, p0=p0[pfree], absolute_sigma=absolute_sigma, jac=jac, bounds=bounds, **kw)
-        
+        # run fit
+        try:
+            submethod = method[len('wleastsq-'):]
+            has_submethod = submethod != ''
+            if not banal_bounds or (has_submethod and submethod != 'lm'):
+                verbosity = max(0, min(print_info - 1, 2))
+                kw.update(verbose=verbosity)
+            if has_submethod:
+                kw.update(method=submethod)
+            par, cov = optimize.curve_fit(f, x, y, sigma=dy, p0=p0[pfree], absolute_sigma=absolute_sigma, jac=jac, bounds=bounds, check_finite=check, **kw)
+        except RuntimeError, OptimizeWarning:
+            success = False
+            if raises:
+                raise
+        else:
+            success = True
+                
+        # construct output
         if full_output:
             x = _asarray(x)
             y = np.asarray(y)
             dy = np.asarray(dy)
             deltay = y - f(x, *par)
             chisq = np.sum((deltay / dy) ** 2)
-            par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
-            out = FitCurveOutput(par=par, cov=cov, chisq=chisq, deltay=deltay, datax=x, datay=y, method=method, check=check)
-        else:
-            par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
-            out = FitCurveOutput(par=par, cov=cov, check=check)
-    
+        par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
+        kwargs = dict(par=par, cov=cov, chisq=chisq, check=check, success=success)
+        if full_output:
+            kwargs.update(deltay=deltay, datax=x, datay=y, method=method)
+        out = FitCurveOutput(**kwargs)
+        
+        # print result
         if print_info >= 1:
             print('Result:')
             print(format_par_cov(par, cov))
     
     ##### LEAST SQUARES #####
     
-    elif method == 'leastsq':
+    elif method == 'leastsq' or method.startswith('leastsq-'):
+        # obtain functions
         f = _apply_pfree(model.f(), pfree, p0)
-        jac = _apply_pfree(model.dfdp_curve_fit(len(x)), pfree, p0)
+        jac = _apply_pfree(model.dfdp_curve_fit(len(x)), pfree, p0) # TODO bug if pfree non-banal
         
-        par, cov = optimize.curve_fit(f, x, y, p0=p0[pfree], absolute_sigma=False, jac=jac, bounds=bounds, **kw)
-
+        # run fit
+        try:
+            submethod = method[len('leastsq-'):]
+            has_submethod = submethod != ''
+            if not banal_bounds or (has_submethod and submethod != 'lm'):
+                verbosity = max(0, min(print_info - 1, 2))
+                kw.update(verbose=verbosity)
+            if has_submethod:
+                kw.update(method=submethod)
+            par, cov = optimize.curve_fit(f, x, y, p0=p0[pfree], absolute_sigma=False, jac=jac, bounds=bounds, check_finite=check, **kw)
+        except RuntimeError, OptimizeWarning:
+            success = False
+            if raises:
+                raise
+        else:
+            success = True
+                
+        # construct output
         if full_output:
             x = _asarray(x)
             y = np.asarray(y)
             deltay = y - f(x, *par)
             chisq = np.sum(deltay ** 2)
-            par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
-            out = FitCurveOutput(par=par, cov=cov, chisq=chisq, deltay=deltay, datax=x, datay=y, method=method, check=check)
-        else:
-            par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
-            out = FitCurveOutput(par=par, cov=cov, check=check)
-
+        par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
+        kwargs = dict(par=par, cov=cov, check=check, success=success)
+        if full_output:
+            kwargs.update(chisq=chisq, deltay=deltay, datax=x, datay=y, method=method)
+        out = FitCurveOutput(**kwargs)
+        
+        # print result
         if print_info >= 1:
             print('Result:')
             print(format_par_cov(par, cov))

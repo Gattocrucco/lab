@@ -4,9 +4,8 @@ plotta una densità di curve di best fit
 fit_plot(x, f or CurveModel, par, cov or FitCurveOutput, n=100, axes=gca(), **kw)
 **kw passed to axes.plot, but label is intercepted and added to one.
 summary (metodo) e/o implementare __repr__
-success (bool) dice se è andato tutto bene
-documentare upar e upx
 fare un summary che printa la matrice di covarianza di par e, nel caso di errori sulle x, printa la covarianza dei px con i par (non px-px).
+le tag negli upar
 
 CurveModel
 verificare se il modello simbolico è del tipo p_i*h_i(x) (hessiana nulla)
@@ -25,8 +24,6 @@ avere un output tipo fit_curve con il chi quadro
 inf se gli metto due punti!!
 
 fit_curve
-bug pfix in linodr (risolto in compton)
-opzione raise=bool per raisare se qualcosa non va bene, default True
 supportare dx == 0 xor dy == 0
   odrpack: ifixx per le dx nulle, se tutte nulle fit_type=2.
            per le dy nulle non so.
@@ -36,18 +33,14 @@ supportare dx == 0 xor dy == 0
 linodr diventa molto instabile se non gli si da le derivate, è un bug della mia derivata discreta dfdx?
 Nota: ribadisco che è instabile al punto da essere un bug, ogni volta che ci casca in mezzo la mia dfdx, anche con altri metodi. Magari sostituirla con numdifftools. Nota: numdifftools è lentissimo, provare prima ad aumentare il diff_step.
 aggiungere px, pxcov a odrpack calcolandolo dopo il fit.
-ml diventa instabile (comunque entro l'1% dei fit) con errori sulle x grossi e modello oscillante.
 controllare che funzioni con x non array se dx is None
 usare -2logL nel minimo come X^2, cioè lo prendo dall'uscita del minimizzatore
 supportare x e y array di unumpy
-bisogna poter scegliere il metodo di least_squares per i metodi linodr, leastsq, wleastsq, il problema è che la keyword è proprio <method>
 printare qualche tipo di risultato anche per wleastsq e leastsq
-far funzionare print_info > 1 anche per wleastsq e leastsq
-le tag negli upar
 covarianza degli y
-indovinare npar in CurveModel da p0
-cosa fa con pfix lista vuota (o array vuoto)?
+controllare se pymc3 adesso supporta bounds solo da un lato
 pfix non funziona con i jacobiani perché bisogna strippare le matrici in uscita
+aggiungere bounds a odrpack con una trasformazione
 
 fit_curve_bootstrap
 aggiungere la possibilità di usare sia media pesata che non producendo due figure
@@ -61,4 +54,6 @@ altro problema di ODRPACK: out.y != y + out.eps, è una cosa tutta calcolata den
 
 format_par_cov
 aggiungere opzione per mettere delle etichette allineate con la tabella, scegliendo se in alto, a sinistra o entrambi (inizialmente solo in alto)
-supportare array di unumpy anziché par, cov separati
+
+TextMatrix
+aggiungere subs={} (dizionario) a text() e fargli ricalcolare la matrice per allineare bene dopo le sostituzioni; usare per sistemare latex().
