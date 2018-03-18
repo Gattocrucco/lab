@@ -370,7 +370,7 @@ class CurveModel:
     def __init__(self, f, symb=False, dfdx=None, dfdp=None, dfdpdx=None, npar=None):
         if symb:
             if npar is None:
-                args = inspect.getargspec(f).args
+                args = inspect.getfullargspec(f).args
                 npar = len(args) - 1
             xsym = sympy.symbols('x', real=True)
             psym = [sympy.symbols('p%s' % num2sub(i), real=True) for i in range(npar)]
@@ -844,7 +844,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
             if isinstance(x[0], uncertainties.UFloat):
                 ux = unumpy.nominal_values(x) # before std_devs because it is more picky
                 udx = unumpy.std_devs(x)
-        except KeyError, IndexError, TypeError:
+        except (KeyError, IndexError, TypeError):
             pass
         else:
             x = ux
@@ -861,10 +861,14 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
             method = 'linodr' # only linodr supports errors only along x
         elif dy is None:
             method = 'leastsq'
+            if print_info >= 2: # default method 'lm' do not support printing
+                method += '-trf'
         elif banal_bounds:
             method = 'odrpack' # generally good method but does not support bounds
         elif dx is None:
             method = 'wleastsq'
+            if print_info >= 2:
+                method += '-trf'
         else:
             method = 'ml' # much slower than odrpack and linodr, but supports bounds and is more correct than linodr
         if print_info >= 1:
@@ -1115,7 +1119,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
                 kw.update(method=submethod)
             par, cov = optimize.curve_fit(f, x, y, p0=p0[pfree], absolute_sigma=absolute_sigma, jac=jac, bounds=bounds, check_finite=check, **kw)
             par, cov, cycles = _fit_curve_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, jac=jac, bounds=bounds, check_finite=check, **kw)
-        except RuntimeError, OptimizeWarning:
+        except (RuntimeError, OptimizeWarning):
             success = False
             if raises:
                 raise
@@ -1164,7 +1168,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
             if has_submethod:
                 kw.update(method=submethod)
             par, cov = optimize.curve_fit(f, x, y, sigma=dy, p0=p0[pfree], absolute_sigma=absolute_sigma, jac=jac, bounds=bounds, check_finite=check, **kw)
-        except RuntimeError, OptimizeWarning:
+        except (RuntimeError, OptimizeWarning):
             success = False
             if raises:
                 raise
@@ -1206,7 +1210,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
             if has_submethod:
                 kw.update(method=submethod)
             par, cov = optimize.curve_fit(f, x, y, p0=p0[pfree], absolute_sigma=False, jac=jac, bounds=bounds, check_finite=check, **kw)
-        except RuntimeError, OptimizeWarning:
+        except (RuntimeError, OptimizeWarning):
             success = False
             if raises:
                 raise
