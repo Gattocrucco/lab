@@ -43,6 +43,7 @@ aggiungere bounds a odrpack con una trasformazione
 fit_curve_bootstrap
 aggiungere la possibilità di usare sia media pesata che non producendo due figure
 supportare pfix
+supportare argomenti singoli
 
 fit_oversampling
 non funziona con tutti i campioni uguali o quasi, bisogna usare metodi bayesiani (emcee perché non ha dipendenze ulteriori)
@@ -55,3 +56,6 @@ aggiungere opzione per mettere delle etichette allineate con la tabella, sceglie
 
 TextMatrix
 aggiungere subs={} (dizionario) a text() e fargli ricalcolare la matrice per allineare bene dopo le sostituzioni; usare per sistemare latex().
+
+Matrix
+aggiungere argomento transpose a __init__

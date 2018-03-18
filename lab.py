@@ -429,7 +429,7 @@ class CurveModel:
         """
         if self._symb:
             import pymc3
-            syms = sympy.symbols("x:%d" % self._npar, real=True)
+            syms = sympy.symbols("x:%d" % (self._npar + 1,), real=True)
             return sympy.lambdify(syms, self._f_sym(*syms), modules=pymc3.math)
         else:
             raise ValueError('model function is not simbolic, can not convert to pymc3')
@@ -1081,6 +1081,8 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
             par = np.mean(df, axis=0)
             cov = np.cov(df, rowvar=False)
         
+        # TODO compute bayes factor
+        
         out = FitCurveOutput(par=par, cov=cov, rawoutput=trace)
         out.model = mcmodel
     
@@ -1252,7 +1254,7 @@ class FitCurveBootstrapOutput:
         pass
 
 def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method='auto', plot=dict(), eta=False, wavg=True, sdmean=True, method_kw=None, full_output=False, **kw):
-    # TODO finire di implementare sdmean (labels dei grafici)
+    # TODO finire di implementare sdmean (labels dei grafici e documentazione)
     """
     Perform a bootstrap, i.e. given a curve model and datapoints with
     uncertainties, generates random displacement to the data with normal
@@ -1409,7 +1411,7 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
                     
                     for j in range(len(methods)):
                         # fit
-                        if methods[j] == 'postmean':
+                        if methods[j] == 'pymc3':
                             if i > 0:
                                 d = dict(init=False, model=prevmodel)
                             else:
@@ -1420,7 +1422,7 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
                         start = time.time()
                         out = fit_curve(model, x, y, dx, dy, p0=p0, method=methods[j], **d)
                         end = time.time()
-                        if method[j] == 'postmean':
+                        if method[j] == 'pymc3':
                             prevmodel = out.model
                 
                         # save results
@@ -1617,9 +1619,10 @@ def fit_curve_bootstrap(f, xmean, dxs=None, dys=None, p0s=None, mcn=1000, method
                     for k in range(len(methods)):
                         labels.append('K.S. test p-value = %.2g' % (pvalue[k],))
                     # plot_text('K.S. test p-value = %.2g %%\n$\mathrm{dof}=n-{\#}p = $%d\n$N\cdot(\\bar{\chi}^2 - \mathrm{dof}) = $%.2g $\sqrt{2\cdot\mathrm{dof}}$' % (100*pvalue, n-len(p0), chidist), loc=1, ax=ax)
-                    ax.hist(chisq, **histkw, label=labels)
+                    selection = np.asarray(methods) != 'pymc3'
+                    ax.hist(chisq[:, selection], **histkw, label=np.asarray(labels)[selection])
                     ax.legend(loc=1, fontsize='small')
-
+                    
                     # histogram of execution time; last row column 2
                     ax = fig.add_subplot(G[-1, 1])
                     ax.set_title('time')
