@@ -34,7 +34,6 @@ linodr diventa molto instabile se non gli si da le derivate, è un bug della mia
 Nota: ribadisco che è instabile al punto da essere un bug, ogni volta che ci casca in mezzo la mia dfdx, anche con altri metodi. Magari sostituirla con numdifftools. Nota: numdifftools è lentissimo, provare prima ad aumentare il diff_step.
 aggiungere px, pxcov a odrpack calcolandolo dopo il fit.
 controllare che funzioni con x non array se dx is None
-usare -2logL nel minimo come X^2, cioè lo prendo dall'uscita del minimizzatore
 printare qualche tipo di risultato anche per wleastsq e leastsq
 covarianza degli y
 controllare se pymc3 adesso supporta bounds solo da un lato

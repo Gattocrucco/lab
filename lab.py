@@ -847,8 +847,9 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
         except (KeyError, IndexError, TypeError):
             pass
         else:
-            x = ux
-            dx = udx
+            if isinstance(x[0], uncertainties.UFloat):
+                x = ux
+                dx = udx
     
     if isinstance(y[0], uncertainties.UFloat):
         y = unumpy.nominal_values(y)

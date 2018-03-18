@@ -12,7 +12,7 @@ p0s = [ # true parameters, axis 0 = parameter, axis 1 = values
 	# logspace(0,1,10),
 	[1],
 	[2],
-	# [3],
+    # [3],
 ]
 fs = [ # sympy functions
 	lambda x, a, b: a * sympy.exp(x / b),
@@ -22,22 +22,23 @@ fs = [ # sympy functions
 	lambda x, m: m * x,
 	lambda t, A, w, phi: A * sympy.sin(w * t + phi)
 ]
-f = fs[3] # function to fit
-bounds = [[-np.pi/2, -np.inf], [np.pi/2, np.inf]]
+f = fs[1] # function to fit
+# bounds = [[-np.pi/2, -np.inf], [np.pi/2, np.inf]]
+bounds=None
 
-mcn = 100 # number of repetitions (monte carlo)
-methods = ['odrpack', 'postmean'] # ev, linodr, odrpack, ml, wleastsq, leastsq
+mcn = 1000 # number of repetitions (monte carlo)
+methods = ['odrpack', 'linodr', 'wleastsq', 'leastsq', 'ev'] # ev, linodr, odrpack, ml, wleastsq, leastsq, pymc3
 xmean = np.linspace(0, 10, 20) # true x
 n = len(xmean) # number of points
-dys = np.outer([2], np.ones(n)*.1) # errors, axis 0 = dataset, axis 1 = point
-dxs = np.outer([10], np.ones(n)*.1)
+dys = np.outer([1], np.ones(n)*.1) # errors, axis 0 = dataset, axis 1 = point
+dxs = np.outer([1], np.ones(n)*.1)
 ####################
 
 method_kw = []
 for m in methods:
 	if m == 'ev':
 		d = dict(max_cycles=50)
-	elif m == 'postmean':
+	elif m == 'pymc3':
 		d = dict(nsamples=1000, print_info=1, init=True)
 	else:
 		d = dict()
@@ -45,7 +46,7 @@ for m in methods:
 
 model = CurveModel(f, symb=True)
 plot = dict(single=showplot, vsp0=showpsplot, vsds=showpsdtplot)
-out = fit_curve_bootstrap(model, xmean, dxs=dxs, dys=dys, p0s=p0s, mcn=mcn, method=methods, plot=plot, eta=True, wavg=False, method_kw=method_kw, full_output=True, bounds=bounds)
+out = fit_curve_bootstrap(model, xmean, dxs=dxs, dys=dys, p0s=p0s, mcn=mcn, method=methods, plot=plot, eta=True, wavg=False, sdmean=False, method_kw=method_kw, full_output=True, bounds=bounds)
 
 figs = []
 if showplot:
