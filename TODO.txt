@@ -35,7 +35,6 @@ Nota: ribadisco che è instabile al punto da essere un bug, ogni volta che ci ca
 aggiungere px, pxcov a odrpack calcolandolo dopo il fit.
 controllare che funzioni con x non array se dx is None
 usare -2logL nel minimo come X^2, cioè lo prendo dall'uscita del minimizzatore
-supportare x e y array di unumpy
 printare qualche tipo di risultato anche per wleastsq e leastsq
 covarianza degli y
 controllare se pymc3 adesso supporta bounds solo da un lato

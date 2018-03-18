@@ -836,6 +836,24 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
             print('Model created from f: {}'.format(model))
             print()
     
+    ##### DATA #####
+    
+    # check if x and/or y are uarrays
+    if hasattr(x, '__len__'):
+        try:
+            if isinstance(x[0], uncertainties.UFloat):
+                ux = unumpy.nominal_values(x) # before std_devs because it is more picky
+                udx = unumpy.std_devs(x)
+        except KeyError, IndexError, TypeError:
+            pass
+        else:
+            x = ux
+            dx = udx
+    
+    if isinstance(y[0], uncertainties.UFloat):
+        y = unumpy.nominal_values(y)
+        dy = unumpy.std_devs(y)
+    
     ##### METHOD #####
     
     if method == 'auto':
