@@ -14,7 +14,6 @@ far funzionare con i metodi come funzione (problema con l'argomento self)
 util_format
 opzione si=True per formattare come num2si
 opzione errdig=(float)|'pdg' per scegliere le cifre dell'errore o usare il formato del PDG
-mettere la virgola anche nell'incertezza tra parentesi (spesso confonde)
 
 _fit_curve_ev
 sostituire conv_diff con epsrel e epsabs

@@ -2507,17 +2507,17 @@ def mme(x, unit, metertype='lab3', sqerr=False):
 
 # *********************** FORMATTING *************************
 
-d = lambda x, n: int(("%.*e" % (n - 1, abs(x)))[0])
-ap = lambda x, n: float("%.*e" % (n - 1, x))
+_d = lambda x, n: int(("%.*e" % (n - 1, abs(x)))[0])
+_ap = lambda x, n: float("%.*e" % (n - 1, x))
 _nd = lambda x: math.floor(math.log10(abs(x))) + 1
 def _format_epositive(x, e, errsep=True, minexp=3):
     # DECIDE NUMBER OF DIGITS
-    if d(e, 2) < 3:
+    if _d(e, 2) < 3:
         n = 2
-        e = ap(e, 2)
-    elif d(e, 1) < 3:
+        e = _ap(e, 2)
+    elif _d(e, 1) < 3:
         n = 2
-        e = ap(e, 1)
+        e = _ap(e, 1)
     else:
         n = 1
     # FORMAT MANTISSAS
@@ -2533,38 +2533,39 @@ def _format_epositive(x, e, errsep=True, minexp=3):
         sx = "%.*f" % (xd, x / 10**ex)
         se = "%.*f" % (xd, e / 10**ex)
     else:
-        le = _nd(e)
-        ex = le - n
+        ex = _nd(e) - n
         sx = '0'
-        se = "%#.*g" % (n, e)
+        se = "%.*g" % (n, e / 10**ex)
     # RETURN
     if errsep:
         return sx, se, ex
-    return sx + '(' + ("%#.*g" % (n, e * 10 ** (n - _nd(e))))[:n] + ')', '', ex
+    short_se = se[-(n+1):] if '.' in se[-n:] else se[-n:]
+    # ("%#.*g" % (n, e * 10 ** (n - _nd(e))))[:n]
+    return sx + '(' + short_se + ')', '', ex
 
 def util_format(x, e, pm=None, percent=False, comexp=True, nicexp=False):
     """
-    format a value with its uncertainty
+    Format a value with its uncertainty.
 
     Parameters
     ----------
-    x : number (or something understood by float(), ex. string representing number)
-        the value
+    x : number (or something understood by float(), e.g. string representing number)
+        The value.
     e : number (or as above)
-        the uncertainty
+        The uncertainty.
     pm : string, optional
         The "plusminus" symbol. If None, use compact notation.
     percent : bool
-        if True, also format the relative error as percentage
+        If True, also format the relative error as percentage.
     comexp : bool
-        if True, write the exponent once.
+        If True, write the exponent once.
     nicexp : bool
-        if True, format exponent like ×10¹²³
+        If True, format exponent like ×10¹²³.
 
     Returns
     -------
     s : string
-        the formatted value with uncertainty
+        The formatted value with uncertainty.
 
     Examples
     --------
