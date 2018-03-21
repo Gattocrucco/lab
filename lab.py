@@ -1058,10 +1058,11 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
             
                 pars = []
                 for i in range(len(p0)):
-                    if np.any(np.isinf(bounds[:,i])):
-                        pars.append(pymc3.Flat("p%d" % i, testval=p0[i]))
-                    else:
-                        pars.append(pymc3.Uniform("p%d" % i, lower=bounds[0,i], upper=bounds[1,i], testval=p0[i]))
+                    lower=None if math.isinf(bounds[0,i]) else bounds[0,i]
+                    upper=None if math.isinf(bounds[1,i]) else bounds[1,i]
+                    distr = pymc3.Bound(pymc3.Flat, lower=lower, upper=upper)
+                    pars.append(distr("p%d" % i, testval=p0[i]))
+                    
                 xt = pymc3.Flat('true x', shape=x.shape, testval=x)
                 
                 xs = pymc3.Normal('x data', mu=xt, sd=data['dx'], observed=data['x'])

@@ -4,7 +4,7 @@ plotta una densità di curve di best fit
 fit_plot(x, f or CurveModel, par, cov or FitCurveOutput, n=100, axes=gca(), **kw)
 **kw passed to axes.plot, but label is intercepted and added to one.
 summary (metodo) e/o implementare __repr__
-fare un summary che printa la matrice di covarianza di par e, nel caso di errori sulle x, printa la covarianza dei px con i par (non px-px).
+fare un summary che printa la matrice di covarianza di par e, nel caso di errori sulle x, printa la covarianza dei px con i par (non px-px) (magari questa opzione metterla in format_par_cov).
 le tag negli upar
 
 CurveModel
@@ -36,7 +36,6 @@ aggiungere px, pxcov a odrpack calcolandolo dopo il fit.
 controllare che funzioni con x non array se dx is None
 printare qualche tipo di risultato anche per wleastsq e leastsq
 covarianza degli y
-controllare se pymc3 adesso supporta bounds solo da un lato
 pfix non funziona con i jacobiani perché bisogna strippare le matrici in uscita
 aggiungere bounds a odrpack con una trasformazione
 
