@@ -50,12 +50,3 @@ non funziona con tutti i campioni uguali o quasi, bisogna usare metodi bayesiani
 
 sembra esserci un problema con il print di ODRPACK, nel report finale sbaglia a scrivere gli errori, fare un bug report.
 altro problema di ODRPACK: out.y != y + out.eps, è una cosa tutta calcolata dentro DODRC quindi non è un problema del wrapper. Si tratta comunque di differenze ragionevoli, può darsi che sia volutamente un'approssimazione sufficiente per non valutare una volta in più la funzione.
-
-format_par_cov
-aggiungere opzione per mettere delle etichette allineate con la tabella, scegliendo se in alto, a sinistra o entrambi (inizialmente solo in alto)
-
-TextMatrix
-aggiungere subs={} (dizionario) a text() e fargli ricalcolare la matrice per allineare bene dopo le sostituzioni; usare per sistemare latex().
-
-Matrix
-aggiungere argomento transpose a __init__

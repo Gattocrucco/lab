@@ -2746,7 +2746,7 @@ def num2sup(x, format=None):
         x = x.replace(_subscrc[i], _supscr[i])
     return x
 
-def format_par_cov(par, cov=None):
+def format_par_cov(par, cov=None, labels=None):
     """
     Format an estimate with a covariance matrix as an upper
     triangular matrix with values on the diagonal (with
@@ -2760,12 +2760,19 @@ def format_par_cov(par, cov=None):
         Covariance matrix from which uncertainties and correlations
         are computed. If None, a covariance matrix is extracted
         from par with uncertainties.covariance_matrix(par).
+    labels : list of strings
+        Labels for the header of the matrix. If there are less than
+        M labels, only the first elements are given labels.
     
     Returns
     -------
     matrix : TextMatrix
         A TextMatrix instance. Can be converted to a string with str().
         Has a method latex() to format as a LaTeX table.
+    
+    See also
+    --------
+    TextMatrix, FitCurveOutput
     
     Examples
     --------
@@ -2782,18 +2789,48 @@ def format_par_cov(par, cov=None):
         cov = uncertainties.covariance_matrix(upar)
     pars = xe(par, np.sqrt(np.diag(cov)))
     corr = fit_norm_cov(cov) * 100
+    
     matrix = []
+    if not (labels is None):
+        if len(labels) < len(par):
+            labels = list(labels) + [''] * (len(par) - len(labels))
+        elif len(labels) > len(par):
+            labels = labels[:len(par)]
+        matrix.append(labels)
+    
     for i in range(len(corr)):
         matrix.append([pars[i]])
         for j in range(i + 1, len(corr)):
             c = corr[i, j]
-            matrix[i].append('{:.1f} %'.format(c) if math.isfinite(c) else str(c))
+            matrix[-1].append('{:.1f} %'.format(c) if math.isfinite(c) else str(c))
     return TextMatrix(matrix, fill_side='left')
 
-class Matrix(object):
-    """docstring for Matrix"""
+class TextMatrix(object):
+    """
+    Object to format tables.
     
-    def __init__(self, matrix, fill=None, fill_side='right'):
+    Methods
+    -------
+    text : generic formatter.
+    latex : format as latex table.
+    transpose : transpose the matrix.
+    """
+    
+    def __init__(self, matrix, fill='', fill_side='right'):
+        """
+        Create a 2D matrix of arbitrary objects.
+        
+        Parameters
+        ----------
+        matrix : tipically list of lists
+            An object that can be interpreted as 2D matrix. If it can not,
+            the resulting TextMatrix is 1x1. If it can be interpreted as
+            a 1D array, then each row has length 1.
+        fill :
+            If the rows are uneven, shorter ones are filled with this object.
+        fill_side : 'right' or 'left'
+            Specify on which side shorter rows are filled.
+        """
         # make sure matrix is at least 1D
         if not hasattr(matrix, '__len__'):
             matrix = [matrix]
@@ -2817,40 +2854,101 @@ class Matrix(object):
                     matrix[i] = [fill] * (maxlength - len(matrix[i])) + list(matrix[i])
                 else:
                     raise KeyError(fill_side)
+            else:
+                matrix[i] = copy.copy(matrix[i])
         
-        self._matrix = np.asarray(matrix)
+        self._matrix = matrix
 
-class TextMatrix(Matrix):
-    """docstring for TextMatrix"""
-    
-    def __init__(self, matrix, fill='', fill_side='right'):
-        super(TextMatrix, self).__init__(matrix, fill, fill_side)
-        self._matrix = np.asarray(self._matrix, dtype=str)
-        self._col_maxlength = np.max([list(map(len, row)) for row in self._matrix], axis=0)
-    
     def __repr__(self):
-        return self.text()
+        return self.text(before=' ')
     
     def __str__(self):
-        return self.text()
+        return self.text(before=' ')
     
-    def text(self, before=' ', after='', between='', newline='\n'):
+    def text(self, before='', after='', between='', newline='\n', subs={}):
+        """
+        Format the matrix as a string. Each element in the matrix
+        is converted to a string using str(), then elements are concatenated
+        in left to right, top to bottom order.
+        
+        Parameters
+        ----------
+        before, after, between : string
+            Strings placed respectively before, after, between the elements.
+        newline : string
+            String placed after each row but the last.
+        subs : dictionary
+            Dictionary specifying substitutions applied to each element,
+            but not to the parameters <before>, <after>, etc. The keys
+            of the dictionary are the strings to be replaced, the values
+            are the replacement strings. If you want the substitutions
+            to be performed in a particular order, use a OrderedDict
+            from the <collections> module.
+        
+        Returns
+        -------
+        s : string
+            Matrix formatted as string.
+        """
+        nrows, ncols = len(self._matrix), len(self._matrix[0])
+        
+        # convert matrix elements to strings, applying subs
+        str_matrix = []
+        for row in range(nrows):
+            str_matrix.append([])
+            for col in range(ncols):
+                element = str(self._matrix[row][col])
+                for sub, rep in subs.items():
+                    element = element.replace(sub, rep)
+                str_matrix[row].append(element)
+        col_maxlength = np.max([list(map(len, row)) for row in str_matrix], axis=0)
+        
+        # convert string matrix to text
         s = ''
-        nrows, ncols = self._matrix.shape
         for row in range(nrows):
             for col in range(ncols):
-                element = self._matrix[row, col]
-                cell_width = self._col_maxlength[col]
-                s += before + ' ' * (cell_width - len(element)) + element + after
+                element = str_matrix[row][col]
+                formatter = '{:>%d}' % col_maxlength[col]
+                s += before + formatter.format(element) + after
                 if col < ncols - 1:
                     s += between
             if row < nrows - 1:
                 s += newline
         return s
     
-    def latex(self):
-        return self.text(before='', after='', between=' & ', newline=' \\\\\n').replace('%', '\\%')
+    def latex(self, **kwargs):
+        """
+        Format the matrix as a LaTeX table.
+        
+        Keyword arguments
+        -----------------
+        Keyword arguments are passed to the <text> method, taking
+        precedence on settings for LaTeX formatting.
+        
+        Returns
+        -------
+        s : string
+            Matrix formatted as LaTeX table.
+        
+        See also
+        --------
+        TextMatrix.text
+        """
+        subs = {
+            '%': r'\%',
+            '&': r'\&'
+        }
+        kw = dict(before='', after='', between=' & ', newline=' \\\\\n', subs=subs)
+        kw.update(kwargs)
+        return self.text(**kw)
     
+    def transpose(self):
+        """
+        Returns a transposed copy of the matrix. The elements
+        are not copied.
+        """
+        return type(self)([[self._matrix[row][col] for row in range(len(self._matrix))] for col in range(len(self._matrix[0]))])
+
 # ************************** TIME *********************************
 
 def util_timecomp(secs):
