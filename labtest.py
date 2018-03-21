@@ -25,6 +25,8 @@ class TestLab(unittest.TestCase):
         self.assertEqual(lab.util_format(0.001, 1, pm=None, percent=True), '0(10)e-1')
         # check that if mantissa is 0 and compact notation is not used the error has correct exponent
         self.assertEqual(lab.util_format(0, 1, pm='+-'), '(0 +- 10)e-1')
+        self.assertEqual(lab.util_format(0, 10, pm='+-'), '0 +- 10')
+        self.assertEqual(lab.util_format(0, 1e5, pm='+-'), '(0 +- 10)e+4')
     
     def test_util_mm_esr(self):
         # check that big numbers are checked
