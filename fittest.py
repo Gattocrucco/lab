@@ -23,11 +23,14 @@ fs = [ # sympy functions
 	lambda t, A, w, phi: A * sympy.sin(w * t + phi)
 ]
 f = fs[1] # function to fit
-# bounds = [[-np.pi/2, -np.inf], [np.pi/2, np.inf]]
-bounds=None
+bounds = [
+    [0, 0],
+    [3, 3]
+]
+# bounds=None
 
-mcn = 1000 # number of repetitions (monte carlo)
-methods = ['odrpack', 'linodr', 'wleastsq', 'leastsq', 'ev'] # ev, linodr, odrpack, ml, wleastsq, leastsq, pymc3
+mcn = 2 # number of repetitions (monte carlo)
+methods = ['pymc3'] # ev, linodr, odrpack, ml, wleastsq, leastsq, pymc3
 xmean = np.linspace(0, 10, 20) # true x
 n = len(xmean) # number of points
 dys = np.outer([1], np.ones(n)*.1) # errors, axis 0 = dataset, axis 1 = point
@@ -39,7 +42,7 @@ for m in methods:
 	if m == 'ev':
 		d = dict(max_cycles=50)
 	elif m == 'pymc3':
-		d = dict(nsamples=1000, print_info=1, init=True)
+		d = dict(nsamples=1000, print_info=1, init=True, njobs=2)
 	else:
 		d = dict()
 	method_kw.append(d)
