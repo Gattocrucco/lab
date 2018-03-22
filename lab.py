@@ -176,6 +176,12 @@ def _asarray(a):
     A = np.asarray(a)
     return a if len(A.shape) == 0 else A
 
+def _asarray_1d(a):
+    return a if a is None else np.atleast_1d(a)
+
+def _asarray_2d(a):
+    return a if a is None else np.atleast_2d(a)
+
 class FitCurveOutput:
     """
     Object that holds the output of fit_curve.
@@ -250,6 +256,7 @@ class FitCurveOutput:
                 raise ValueError("You should specify npar")
         
         if not (px is None):
+            px = np.atleast_1d(px)
             self.px = np.asarray(px)
             self.par = self.px[:npar]
             self.fitx = self.px[npar:]
@@ -257,16 +264,17 @@ class FitCurveOutput:
                 assert par is None
                 assert fitx is None
         else:
-            self.par = _asarray(par)
-            self.fitx = _asarray(fitx)
+            self.par = _asarray_1d(par)
+            self.fitx = _asarray_1d(fitx)
             
         if not (pxcov is None):
+            pxcov = np.atleast_2d(pxcov)
             self.pxcov = np.asarray(pxcov)
             self.cov = self.pxcov[:npar,:npar]
             if check:
                 assert cov is None
         else:
-            self.cov = _asarray(cov)
+            self.cov = _asarray_2d(cov)
         
         if hasattr(self, 'px') and hasattr(self, 'pxcov'):
             self.upx = uncertainties.correlated_values(self.px, self.pxcov)
@@ -720,9 +728,10 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
     
     Fitting methods
     ---------------
-    All the methods perform a maximum-likelihood fit assuming normal (i.e.
-    gaussian) uncertainties.
-    # TODO doc method <pymc3>
+    All the methods fit a model with gaussian uncertainties, eventually
+    under some approximations. Most of the methods compute the maximum
+    likelihood estimator, while 'pymc3' samples the posterior with flat
+    priors using the pymc3 module.
     'auto' :
         Choose automatically an appropriate method, based on the values of
         dx, dy, bounds given.
@@ -750,14 +759,14 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
         Supports uncertainties only on both x and y and provides an
         estimate of the covariance between datapoints and parameters.
         Keyword arguments are passed to scipy.optimize.least_squares.
-    'leastsq' :
-        Ignore given uncertainties, put unitary uncertainties on y and
-        apply absolute_sigma=False independently of the value given.
-        Keyword arguments are passed to scipy.optimize.curve_fit.
     'wleastsq' :
         Supports no uncertainties or only on y. In the first case behave as
         'leastsq', but do not impose absolute_sigma. Keyword arguments are
         passed to scipy.optimize.curve_fit.
+    'leastsq' :
+        Ignore given uncertainties, put unitary uncertainties on y and
+        apply absolute_sigma=False independently of the value given.
+        Keyword arguments are passed to scipy.optimize.curve_fit.
     'ev' :
         Supports uncertainties on x and y or only on y. Works well under
         the same assumptions of linodr, but tipically worse; the same
@@ -771,6 +780,28 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
         'linodr'. Other keyword arguments are passed to
         scipy.optimize.curve_fit. The output object has a member 'cycles'
         which is the number of cycles done.
+    'pymc3' :
+        Supports uncertainties only on both x and y. Perform a bayesian
+        fit sampling the posterior with flat priors. It is strongly advised
+        to use print_info >= 1 with this method to show a progress bar.
+        Specific keyword arguments are:
+        model : pymc3.Model or None
+            By default a new model is created for the fit. Creating a model
+            is slow; you can get the model created from the member 'model'
+            of the output object and give it back through this argument
+            if you run the fit again (eventually with different data).
+        init : bool, default True
+            If True, initialize the sampler with init='auto':
+            >>> pymc3.sample(init='auto', ...)
+            If False, do not initialize. False may be useful if you recycle
+            a model from a previous fit.
+        nsamples : integer > 0, default 10_000
+            Number of posterior samples to be drawn.
+        njobs : integer, default 1
+            The <njobs> parameter of pymc3.sample; sets the number of threads.
+            A good choice may be 2, but the default is 1 because in case of
+            problematic fits the hidden thread may freeze the program.
+        Other keyword arguments are passed to pymc3.sample.
     
     Returns
     -------
@@ -782,7 +813,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
     
     See also
     --------
-    scipy.optimize.curve_fit
+    scipy.optimize.curve_fit, pymc3, lsqfit
     """
     
     if print_info >= 1:
@@ -1047,35 +1078,48 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
         init = kw.pop('init', True)
         njobs = kw.pop('njobs', 1)
         
+        # sanitize input
+        x = _asarray(x)
+        y = np.asarray(y)
+        dx = _asarray(dx)
+        dy = np.asarray(dy)
+        variables = ['y', 'dy']
+        if isinstance(x, np.ndarray):
+            variables += ['x']
+        if isinstance(dx, np.ndarray):
+            variables += ['dx']
+
         f = model.f_pymc3()
         
         if mcmodel is None:
-            mcmodel = pymc3.Model()        
-            with mcmodel:
-                data = dict()
-                for var in ['x', 'y', 'dx', 'dy']:
-                    data[var] = theano.shared(eval(var))
+            data = dict()
+            for var in variables:
+                data[var] = theano.shared(eval(var))
             
+            mcmodel = pymc3.Model()
+            with mcmodel:
                 pars = []
                 for i in range(len(p0)):
-                    lower=None if math.isinf(bounds[0,i]) else bounds[0,i]
-                    upper=None if math.isinf(bounds[1,i]) else bounds[1,i]
+                    lower = None if math.isinf(bounds[0, i]) else bounds[0, i]
+                    upper = None if math.isinf(bounds[1, i]) else bounds[1, i]
                     distr = pymc3.Bound(pymc3.Flat, lower=lower, upper=upper)
                     pars.append(distr("p%d" % i, testval=p0[i]))
-                    
-                xt = pymc3.Flat('true x', shape=x.shape, testval=x)
                 
-                xs = pymc3.Normal('x data', mu=xt, sd=data['dx'], observed=data['x'])
-                ys = pymc3.Normal('y data', mu=f(xt, *pars), sd=data['dy'], observed=data['y'])
+                if isinstance(dx, np.ndarray):
+                    xt = pymc3.Flat('true x', shape=x.shape, testval=x)
+                    xs = pymc3.Normal('x data', mu=xt, sd=data['dx'], observed=data['x'])
+                    ys = pymc3.Normal('y data', mu=f(xt, *pars), sd=data['dy'], observed=data['y'])
+                else:
+                    ys = pymc3.Normal('y data', mu=f(data.get('x', x), *pars), sd=data['dy'], observed=data['y'])
                 
                 mcmodel._fit_curve_data = data
         else:
             data = mcmodel._fit_curve_data
             
-            for var in ['x', 'y', 'dx', 'dy']:
+            for var in variables:
                 data[var].set_value(eval(var))
         
-        with mcmodel:    
+        with mcmodel:
             trace = pymc3.sample(nsamples, init='auto' if init else None, njobs=njobs, progressbar=print_info >= 1, **kw)
             varnames = ["p%d" % i for i in range(len(p0))]
             df = pymc3.trace_to_dataframe(trace, varnames=varnames)[varnames]

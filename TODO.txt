@@ -42,6 +42,7 @@ fit_curve_bootstrap
 aggiungere la possibilità di usare sia media pesata che non producendo due figure
 supportare pfix
 supportare argomenti singoli
+passare a default wavg=False
 
 fit_oversampling
 non funziona con tutti i campioni uguali o quasi, bisogna usare metodi bayesiani (emcee perché non ha dipendenze ulteriori)
