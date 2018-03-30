@@ -41,5 +41,54 @@ class TestLab(unittest.TestCase):
         normalized_cov = [[1, -0.375], [-0.375, 1]]
         self.assertTrue(np.array_equal(lab.fit_norm_cov(cov), normalized_cov))
 
+class TestFitCurve(unittest.TestCase):
+    
+    def test_line_defaults(self):
+        # Perform the fit of a straight line with fit_linear and with
+        # all the methods of fit_curve, with default options. Check
+        # that results are identical.
+        
+        # Config parameters
+        x = np.linspace(0, 1, 10)
+        m = 2
+        q = 3
+        dy = 0.1 * np.ones(x.shape) # uniform errors because of leastsq
+        methods = [
+            'wleastsq',
+            'leastsq',
+            'odrpack',
+            'linodr',
+            'ev'
+            # omit pymc3 because result is different
+            # omit ml because it requires errors on x
+        ]
+        
+        # Reference fit
+        y = m * x + q + dy * np.random.randn(*x.shape)
+        par, cov = lab.fit_linear(x, y, dy=dy)
+        chisq = np.sum((y - (par[0] * x + par[1])) ** 2 / dy ** 2)
+        
+        # fits
+        for method in methods:
+            out = lab.fit_curve(lambda x, m, q: m * x + q, x, y, dy=dy, p0=[1, 1], method=method)
+            assertions = []
+            assertions.append(np.allclose(par, out.par))
+            if method == 'leastsq':
+                ratio = out.cov / cov
+                assertions.append(np.allclose(0, ratio - np.mean(ratio)))
+            else:
+                assertions.append(np.allclose(cov, out.cov))
+            assertions.append(np.allclose(chisq, out.chisq, atol=0.1))
+            assertion = all(assertions)
+            if not assertion:
+                print('Fit different from reference fit.')
+                print('Reference result:')
+                print('chisq = {:.2f}'.format(chisq))
+                print(lab.format_par_cov(par, cov))
+                print('Method `{}` result:'.format(method))
+                print('chisq = {:.2f}'.format(out.chisq))
+                print(lab.format_par_cov(out.par, out.cov))
+            self.assertTrue(assertion)
+
 if __name__ == '__main__':
     unittest.main()

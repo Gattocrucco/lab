@@ -1167,7 +1167,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
                 kw.update(method=submethod)
             par, cov = optimize.curve_fit(f, x, y, p0=p0[pfree], absolute_sigma=absolute_sigma, jac=jac, bounds=bounds, check_finite=check, **kw)
             par, cov, cycles = _fit_curve_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, jac=jac, bounds=bounds, check_finite=check, **kw)
-        except (RuntimeError, OptimizeWarning):
+        except (RuntimeError, optimize.OptimizeWarning):
             success = False
             if raises:
                 raise
@@ -1216,7 +1216,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
             if has_submethod:
                 kw.update(method=submethod)
             par, cov = optimize.curve_fit(f, x, y, sigma=dy, p0=p0[pfree], absolute_sigma=absolute_sigma, jac=jac, bounds=bounds, check_finite=check, **kw)
-        except (RuntimeError, OptimizeWarning):
+        except (RuntimeError, optimize.OptimizeWarning):
             success = False
             if raises:
                 raise
@@ -1258,7 +1258,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
             if has_submethod:
                 kw.update(method=submethod)
             par, cov = optimize.curve_fit(f, x, y, p0=p0[pfree], absolute_sigma=False, jac=jac, bounds=bounds, check_finite=check, **kw)
-        except (RuntimeError, OptimizeWarning):
+        except (RuntimeError, optimize.OptimizeWarning):
             success = False
             if raises:
                 raise
@@ -1269,8 +1269,9 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
         if full_output:
             x = _asarray(x)
             y = np.asarray(y)
+            dy = 1 if dy is None else np.asarray(dy)
             deltay = y - f(x, *par)
-            chisq = np.sum(deltay ** 2)
+            chisq = np.sum(deltay ** 2 / dy ** 2)
         par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
         kwargs = dict(par=par, cov=cov, check=check, success=success)
         if full_output:
