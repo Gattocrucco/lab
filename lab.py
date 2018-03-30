@@ -786,7 +786,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
     'leastsq' :
         Ignore given uncertainties, put unitary uncertainties on y and
         apply absolute_sigma=False independently of the value given.
-        Keyword arguments are passed to scipy.optimize.curve_fit.
+        Keyword arguments are passed to scipy.optimize.least_squares.
     'ev' :
         Supports uncertainties on x and y or only on y. Works well under
         the same assumptions of linodr, but tipically worse; the same
@@ -1261,7 +1261,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
         
         # print result
         if print_info >= 1:
-            if print_info > 1 and submethod != 'lm':
+            if print_info > 1:
                 print()
             else:
                 print(output.message)
@@ -1273,40 +1273,44 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
     elif method == 'leastsq' or method.startswith('leastsq-'):
         # obtain functions
         f = _apply_pfree(model.f(), pfree, p0)
-        jac = _apply_pfree(model.dfdp_curve_fit(len(x)), pfree, p0) # TODO bug if pfree non-banal
+        dfdps = _apply_pfree_list(model.dfdps(), pfree, p0)
+        dfdp = _apply_pfree(model.dfdp(len(x)), pfree, p0) if dfdps is None else None # TODO bug if pfree non-banal
+        
+        # sanitize input
+        x = _asarray(x)
+        y = np.asarray(y)
+        dy = _asarray(dy)
         
         # run fit
-        try:
-            submethod = method[len('leastsq-'):]
-            has_submethod = submethod != ''
-            if not banal_bounds or (has_submethod and submethod != 'lm'):
-                verbosity = max(0, min(print_info - 1, 2))
-                kw.update(verbose=verbosity)
-            if has_submethod:
-                kw.update(method=submethod)
-            par, cov = optimize.curve_fit(f, x, y, p0=p0[pfree], absolute_sigma=False, jac=jac, bounds=bounds, check_finite=check, **kw)
-        except (RuntimeError, optimize.OptimizeWarning):
-            success = False
-            if raises:
-                raise
-        else:
-            success = True
-                
+        verbosity = max(0, min(print_info - 1, 2))
+        submethod = method[len('leastsq-'):]
+        has_submethod = submethod != ''
+        if has_submethod:
+            kw.update(method=submethod)
+        par, cov, output = _fit_curve_wleastsq(f, x, y, np.array(1), p0[pfree], dfdps=dfdps, dfdp=dfdp, verbose=verbosity, bounds=bounds, **kw)
+        
+        # check success
+        success = output.success
+        if raises and not success:
+            raise RuntimeError('least_squares reports fit failure, reason: {}'.format(output.message))
+        
         # construct output
-        if full_output:
-            x = _asarray(x)
-            y = np.asarray(y)
-            dy = 1 if dy is None else np.asarray(dy)
-            deltay = y - f(x, *par)
-            chisq = np.sum(deltay ** 2 / dy ** 2)
+        chisq = 2 * output.cost
+        cov *= chisq / (len(x) - len(par))
+        deltay = y - f(x, *par)
+        chisq = np.sum((deltay / (1 if dy is None else dy)) ** 2)
         par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
-        kwargs = dict(par=par, cov=cov, check=check, success=success)
+        kwargs = dict(par=par, cov=cov, chisq=chisq, check=check, success=success)
         if full_output:
-            kwargs.update(chisq=chisq, deltay=deltay, datax=x, datay=y, method=method)
+            kwargs.update(deltay=deltay, datay=y, method=method, rawoutput=output)
         out = FitCurveOutput(**kwargs)
         
         # print result
         if print_info >= 1:
+            if print_info > 1:
+                print()
+            else:
+                print(output.message)
             print('Result:')
             print(format_par_cov(par, cov))
     
