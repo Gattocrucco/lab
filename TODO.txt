@@ -33,9 +33,7 @@ linodr diventa molto instabile se non gli si da le derivate, è un bug della mia
 Nota: ribadisco che è instabile al punto da essere un bug, ogni volta che ci casca in mezzo la mia dfdx, anche con altri metodi. Magari sostituirla con numdifftools. Nota: numdifftools è lentissimo, provare prima ad aumentare il diff_step.
 aggiungere px, pxcov a odrpack calcolandolo dopo il fit.
 controllare che funzioni con x non array se dx is None
-printare qualche tipo di risultato anche per wleastsq e leastsq
 covarianza degli y
-pfix non funziona con i jacobiani perché bisogna strippare le matrici in uscita
 aggiungere bounds a odrpack con una trasformazione
 
 fit_curve_bootstrap

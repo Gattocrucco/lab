@@ -75,26 +75,10 @@ def fit_norm_cov(cov):
             cov[j, i] = cov[i, j]
     return cov
 
-def _fit_curve_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=True, conv_diff=1e-7, max_cycles=5, **kw):
-    cycles = 1
-    while True:
-        if cycles >= max_cycles:
-            cycles = -1
-            break
-        dyeff = np.sqrt(dy**2 + (dfdx(x, *par) * dx)**2)
-        rt = optimize.curve_fit(f, x, y, p0=par, sigma=dyeff, absolute_sigma=absolute_sigma, **kw)
-        npar, ncov = rt[:2]
-        error = abs(npar - par) / npar
-        cerror = abs(ncov - cov) / ncov
-        par = npar
-        cov = ncov
-        cycles += 1
-        if (error < conv_diff).all() and (cerror < conv_diff).all():
-            break
-    return par, cov, cycles
-
 class _Nonedict(dict):
-    
+    """
+    Dictionary that ignores None values at initialization.
+    """
     def __init__(self, **kw):
         for k in kw:
             if not (kw[k] is None):
@@ -110,6 +94,28 @@ def _least_squares_cov(result):
     s = s[s > threshold]
     VT = VT[:s.size]
     return np.dot(VT.T / s**2, VT)    
+
+def _fit_curve_wleastsq(f, x, y, dy, p0, dfdps=None, dfdp=None, **kw):
+    def fun(p):
+        return (y - f(x, *p)) / dy
+    if not (dfdps is None and dfdp is None):
+        rt = np.empty((len(y), len(p0)))
+        if not (dfdps is None):
+            def jac(p):
+                for i in range(len(p)):
+                    rt[:,i] = -dfdps[i](x, *p) / dy
+                return rt
+        else:
+            def jac(p):
+                rt[:] = -dfdp(x, *p) / dy.reshape(-1,1)
+                return rt
+    else:
+        jac = None
+    kw.update(_Nonedict(jac=jac))
+    result = optimize.least_squares(fun, p0, **kw)
+    par = result.x
+    cov = _least_squares_cov(result)
+    return par, cov, result
 
 def _fit_curve_odr(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, dfdp=None, dfdpdx=None, **kw):
     dy2 = dy**2
@@ -128,26 +134,6 @@ def _fit_curve_odr(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdpdxs=None, dfd
                     rt[:,i] = - (dfdps[i](x, *p) * srad + dfdpdxs[i](x, *p) * res) / rad
             else:
                 rt[:] = - (dfdp(x, *p) * srad.reshape(-1,1) + dfdpdx(x, *p) * res.reshape(-1,1)) / rad.reshape(-1,1)
-            return rt
-    else:
-        jac = None
-    kw.update(_Nonedict(jac=jac))
-    result = optimize.least_squares(fun, p0, **kw)
-    par = result.x
-    cov = _least_squares_cov(result)
-    return par, cov, result
-
-def _fit_curve_wleastsq(f, x, y, dy, p0, dfdps=None, dfdp=None, **kw):
-    def fun(p):
-        return (y - f(x, *p)) / dy
-    if not (dfdps is None and dfdp is None):
-        rt = np.empty((len(y), len(p0)))
-        def jac(p):
-            if not (dfdps is None):
-                for i in range(len(p)):
-                    rt[:,i] = -dfdps[i](x, *p) / dy
-            else:
-                rt[:] = -dfdp(x, *p) / dy.reshape(-1,1)
             return rt
     else:
         jac = None
@@ -191,6 +177,26 @@ def _fit_curve_ml(f, x, y, dx, dy, p0, dfdx=None, dfdps=None, dfdp=None, bounds=
     par = result.x
     cov = _least_squares_cov(result)
     return par, cov, result
+
+def _fit_curve_ev(f, dfdx, x, y, dx, dy, par, cov, dfdps=None, dfdp=None, absolute_sigma=True, rtol=1e-5, atol=1e-8, max_cycles=5, **kw):
+    cycles = 1
+    while True:
+        if cycles >= max_cycles:
+            cycles = -1
+            break
+        dyeff = np.sqrt(dy**2 + (dfdx(x, *par) * dx)**2)
+        npar, ncov, result = _fit_curve_wleastsq(f, x, y, dyeff, par, dfdps=dfdps, dfdp=dfdp, **kw)
+        if not absolute_sigma:
+            chisq = 2 * result.cost
+            ncov *= chisq / (len(y) - len(par))
+        error = np.abs(npar - par) - (np.abs(rtol * npar) + atol)
+        cerror = np.abs(ncov - cov) - (np.abs(rtol * ncov) + atol)
+        par = npar
+        cov = ncov
+        cycles += 1
+        if np.all(error <= 0) and np.all(cerror <= 0):
+            break
+    return par, cov, result, cycles
 
 def _asarray(a):
     A = np.asarray(a)
@@ -673,6 +679,16 @@ def _apply_pfree_list(f_list, pfree, p0):
     else:
         return f_list
 
+def _apply_pfree_dfdp(f, pfree, p0):
+    if not (f is None) and not all(pfree):
+        n_par = np.copy(p0)
+        def F(x, *par):
+            n_par[pfree] = par
+            return f(x, *n_par)[:,pfree]
+        return F
+    else:
+        return f
+
 def _apply_pfree_par_cov(par, cov, pfree, p0):
     if not all(pfree):
         n_par = np.empty(len(p0), dtype=par.dtype)
@@ -794,12 +810,12 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
         procedure of 'wleastsq' many times, using the estimated parameters
         at an iteration to propagate the uncertainties on x to
         uncertainties on y for the next iteration. The keyword argument
-        'max_cycles' set a limit on the number of iterations; 'conv_diff'
-        set the relative difference between successive estimates (both values
-        and covariance) that stops the cycle; 'diff_step' is used as in
-        'linodr'. Other keyword arguments are passed to
-        scipy.optimize.curve_fit. The output object has a member 'cycles'
-        which is the number of cycles done.
+        'max_cycles' set a limit on the number of iterations; 'rtol'
+        sets the relative difference between successive estimates (both values
+        and covariance) that stops the cycle, while 'atol' sets the absolute
+        difference; 'diff_step' is used as in 'linodr'. Other keyword arguments
+        are passed to scipy.optimize.least_squares. The output object has a member
+        'cycles' which is the number of cycles done.
     'pymc3' :
         Supports uncertainties only on both x and y. Perform a bayesian
         fit sampling the posterior with flat priors. It is strongly advised
@@ -855,9 +871,11 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
         pfix = np.atleast_1d(pfix)
         if np.issubdtype('bool', pfix.dtype):
             if len(pfix) != len(p0):
-                raise ValueError('length of pfix ({}) different from length of p0 ({})'.format(len(pfix), len(p0)))
+                raise ValueError('pfix is an array of booleans and length of pfix ({}) is different from length of p0 ({})'.format(len(pfix), len(p0)))
             pfree = ~pfix
         elif np.issubdtype('int', pfix.dtype) or np.issubdtype('uint', pfix.dtype):
+            if np.any(pfix >= len(p0)):
+                raise ValueError('pfix is an array of integers and there are elements which exceed the length of p0 ({})'.format(len(p0)))
             pfree = np.ones(len(p0), dtype=bool)
             pfree[pfix] = False
         elif len(pfix) == 0:
@@ -891,6 +909,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
     
     # check if x and/or y are uarrays
     if hasattr(x, '__len__'):
+        # the try statement is because x may not be an array
         try:
             if isinstance(x[0], uncertainties.UFloat):
                 ux = unumpy.nominal_values(x) # before std_devs because it is more picky
@@ -986,8 +1005,8 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
         dfdx = _apply_pfree(model.dfdx(), pfree, p0)
         dfdps = _apply_pfree_list(model.dfdps(), pfree, p0)
         dfdpdxs = _apply_pfree_list(model.dfdpdxs(), pfree, p0)
-        dfdp = _apply_pfree(model.dfdp(len(x)), pfree, p0) if dfdps is None else None # TODO bug if pfree non-banal
-        dfdpdx = _apply_pfree(model.dfdpdx(len(x)), pfree, p0) if dfdpdxs is None else None # also here
+        dfdp = _apply_pfree_dfdp(model.dfdp(len(x)), pfree, p0) if dfdps is None else None
+        dfdpdx = _apply_pfree_dfdp(model.dfdpdx(len(x)), pfree, p0) if dfdpdxs is None else None
         
         # eventually make step-forward derivative
         if dfdx is None:
@@ -1051,7 +1070,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
         f = _apply_pfree(model.f(), pfree, p0)
         dfdx = _apply_pfree(model.dfdx(), pfree, p0)
         dfdps = _apply_pfree_list(model.dfdps(), pfree, p0)
-        dfdp = _apply_pfree(model.dfdp(len(x)), pfree, p0) if dfdps is None else None # TODO bug if pfree non-banal
+        dfdp = _apply_pfree_dfdp(model.dfdp(len(x)), pfree, p0) if dfdps is None else None
         
         # sanitize input
         x = np.asarray(x)
@@ -1157,9 +1176,13 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
         # obtain functions
         f = _apply_pfree(model.f(), pfree, p0)
         dfdx = _apply_pfree(model.dfdx(), pfree, p0)
-        jac = _apply_pfree(model.dfdp_curve_fit(len(x)), pfree, p0) # TODO bug if pfree non-banal
-        conv_diff = kw.pop('conv_diff', 1e-7)
+        dfdps = _apply_pfree_list(model.dfdps(), pfree, p0)
+        dfdp = _apply_pfree_dfdp(model.dfdp(len(x)), pfree, p0) if dfdps is None else None
+        
+        # keyword arguments
         max_cycles = kw.pop('max_cycles', 5)
+        rtol = kw.pop('rtol', 1e-5)
+        atol = kw.pop('atol', 1e-8)
         
         # eventually make step-forward derivative
         if dfdx is None:
@@ -1177,45 +1200,46 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
             dx = 0
         
         # run fit
-        try:
-            submethod = method[len('ev-'):]
-            has_submethod = submethod != ''
-            if not banal_bounds or (has_submethod and submethod != 'lm'):
-                verbosity = max(0, min(print_info - 1, 2))
-                kw.update(verbose=verbosity)
-            if has_submethod:
-                kw.update(method=submethod)
-            par, cov = optimize.curve_fit(f, x, y, p0=p0[pfree], absolute_sigma=absolute_sigma, jac=jac, bounds=bounds, check_finite=check, **kw)
-            par, cov, cycles = _fit_curve_ev(f, dfdx, x, y, dx, dy, par, cov, absolute_sigma=absolute_sigma, conv_diff=conv_diff, max_cycles=max_cycles, jac=jac, bounds=bounds, check_finite=check, **kw)
-        except (RuntimeError, optimize.OptimizeWarning):
-            success = False
-            if raises:
-                raise
-        else:
-            success = True
+        verbosity = max(0, min(print_info - 1, 2))
+        submethod = method[len('ev-'):]
+        has_submethod = submethod != ''
+        if has_submethod:
+            kw.update(method=submethod)
+        par, cov, output = _fit_curve_wleastsq(f, x, y, dy, p0[pfree], dfdps=dfdps, dfdp=dfdp, verbose=verbosity, bounds=bounds, **kw)
+        if not absolute_sigma:
+            chisq = 2 * output.cost
+            cov *= chisq / (len(y) - len(par))
+        par, cov, output, cycles = _fit_curve_ev(f, dfdx, x, y, dx, dy, par, cov, dfdps=dfdps, dfdp=dfdp, rtol=rtol, atol=atol, max_cycles=max_cycles, absolute_sigma=absolute_sigma, verbose=verbosity, bounds=bounds, **kw)
         
         # check success
-        if raises and cycles == -1:
-            raise RuntimeError('Maximum number (%d) of fit cycles reached' % max_cycles)
+        success = output.success
+        if raises and not success:
+            raise RuntimeError('least_squares reports fit failure, reason: {}'.format(output.message))
+        if raises and cycles < 0:
+            raise RuntimeError('maximum number of cycles ({}) exceeded'.format(max_cycles))
         
         # construct output
+        chisq = 2 * output.cost
         if full_output:
             deriv = dfdx(x, *par)
             err2 = dy ** 2   +   deriv ** 2  *  dx ** 2
-            chisq = np.sum((y - f(x, *par))**2 / err2)
             fact = (y - f(x, *par)) / err2
             deltax = fact * deriv * dx**2
             deltay = -fact * dy**2
         par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
-        kwargs = dict(par=par, cov=cov, check=check, success=success)
+        kwargs = dict(par=par, cov=cov, chisq=chisq, check=check, success=success)
         if full_output:
-            kwargs.update(datax=x, datay=y, chisq=chisq, method=method, deltax=deltax, deltay=deltay)
+            kwargs.update(deltax=deltax, deltay=deltay, datax=x, datay=y, method=method, rawoutput=output)
         out = FitCurveOutput(**kwargs)
         out.cycles = cycles
         
         # print result
         if print_info >= 1:
-            print('Cycles: %d' % cycles)
+            print('Cycles: {:d}'.format(cycles))
+            if print_info > 1:
+                print()
+            else:
+                print(output.message)
             print('Result:')
             print(format_par_cov(par, cov))
     
@@ -1225,7 +1249,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
         # obtain functions
         f = _apply_pfree(model.f(), pfree, p0)
         dfdps = _apply_pfree_list(model.dfdps(), pfree, p0)
-        dfdp = _apply_pfree(model.dfdp(len(x)), pfree, p0) if dfdps is None else None # TODO bug if pfree non-banal
+        dfdp = _apply_pfree_dfdp(model.dfdp(len(x)), pfree, p0) if dfdps is None else None
         
         # sanitize input
         x = _asarray(x)
@@ -1274,7 +1298,7 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
         # obtain functions
         f = _apply_pfree(model.f(), pfree, p0)
         dfdps = _apply_pfree_list(model.dfdps(), pfree, p0)
-        dfdp = _apply_pfree(model.dfdp(len(x)), pfree, p0) if dfdps is None else None # TODO bug if pfree non-banal
+        dfdp = _apply_pfree_dfdp(model.dfdp(len(x)), pfree, p0) if dfdps is None else None
         
         # sanitize input
         x = _asarray(x)
