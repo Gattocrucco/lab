@@ -278,7 +278,7 @@ class FitCurveOutput:
             Anone = np.array([a is None for a in A], dtype=bool)
             if npar is None and not all(Anone):
                 npar = -len(A[~Anone][0])
-            else:
+            elif npar is None:
                 raise ValueError("You should specify npar")
         
         if not (px is None):
@@ -700,7 +700,7 @@ def _apply_pfree_par_cov(par, cov, pfree, p0):
     else:
         return par, cov
 
-def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolute_sigma=True, method='auto', print_info=0, full_output=True, check=True, raises=None, **kw):
+def fit_curve(f, x, y, dx=None, dy=None, covy=None, p0=None, pfix=None, bounds=None, absolute_sigma=True, method='auto', print_info=0, full_output=True, check=True, raises=None, **kw):
     """
     Fit a curve in the form:
     y = f(x, *par)
@@ -712,14 +712,17 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
         If callable: a function with signature f(x, *par), which is used to
         initialize a CurveModel. If CurveModel: it is used directly. See
         CurveModel for details.
-    x : 1D array
+    x : 1D array of numbers or ufloats
         x data.
-    y : 1D array
+    y : 1D array of numbers or ufloats
         y data.
     dx : 1D array or None
-        Uncertainties of x data.
+        Uncertainties of x data. If x are ufloats, dx is ignored.
     dy : 1D array or None
         Uncertainties of y data.
+    covy : 2D array or None
+        Covariance matrix of y. If specified, it supersedes dy. If y are ufloats,
+        dy and covy are ignored.
     p0 : 1D array
         Initial estimate of *par. Must be specified.
     pfix : None or 1D array either of integers or bools
@@ -924,6 +927,9 @@ def fit_curve(f, x, y, dx=None, dy=None, p0=None, pfix=None, bounds=None, absolu
     if isinstance(y[0], uncertainties.UFloat):
         y = unumpy.nominal_values(y)
         dy = unumpy.std_devs(y)
+        covy = np.atleast_2d(uncertainties.covariance_matrix(y))
+        if np.all(np.diag(np.diag(covy)) == covy):
+            covy = None
     
     ##### METHOD #####
     
@@ -3149,7 +3155,7 @@ class Eta():
         elif progress == 0:
             return np.inf
         else:
-            raise RuntimeError("progress %.2f out of bounds [0,1]" % progress)
+            raise ValueError("progress %.2f out of bounds [0,1]" % progress)
     
     def etastr(self, progress):
         """

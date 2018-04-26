@@ -6,6 +6,7 @@ fit_plot(x, f or CurveModel, par, cov or FitCurveOutput, n=100, axes=gca(), **kw
 summary (metodo) e/o implementare __repr__
 fare un summary che printa la matrice di covarianza di par e, nel caso di errori sulle x, printa la covarianza dei px con i par (non px-px) (magari questa opzione metterla in format_par_cov).
 le tag negli upar
+mettere il chi quadro di ogni punto (comodo per trovare al volo gli outliers)
 
 CurveModel
 verificare se il modello simbolico è del tipo p_i*h_i(x) (hessiana nulla)
@@ -37,7 +38,6 @@ covarianza degli y
 aggiungere bounds a odrpack con una trasformazione
 
 fit_curve_bootstrap
-aggiungere la possibilità di usare sia media pesata che non producendo due figure
 supportare pfix
 supportare argomenti singoli
 passare a default wavg=False
