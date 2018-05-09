@@ -5,7 +5,6 @@ fit_plot(x, f or CurveModel, par, cov or FitCurveOutput, n=100, axes=gca(), **kw
 **kw passed to axes.plot, but label is intercepted and added to one.
 summary (metodo) e/o implementare __repr__
 fare un summary che printa la matrice di covarianza di par e, nel caso di errori sulle x, printa la covarianza dei px con i par (non px-px) (magari questa opzione metterla in format_par_cov).
-le tag negli upar
 mettere il chi quadro di ogni punto (comodo per trovare al volo gli outliers)
 
 CurveModel
