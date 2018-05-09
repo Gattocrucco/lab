@@ -925,11 +925,11 @@ def fit_curve(f, x, y, dx=None, dy=None, covy=None, p0=None, pfix=None, bounds=N
                 dx = udx
     
     if isinstance(y[0], uncertainties.UFloat):
-        y = unumpy.nominal_values(y)
         dy = unumpy.std_devs(y)
         covy = np.atleast_2d(uncertainties.covariance_matrix(y))
         if np.all(np.diag(np.diag(covy)) == covy):
             covy = None
+        y = unumpy.nominal_values(y)
     
     ##### METHOD #####
     
