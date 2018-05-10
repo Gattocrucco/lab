@@ -95,23 +95,30 @@ def _least_squares_cov(result):
     VT = VT[:s.size]
     return np.dot(VT.T / s**2, VT)    
 
-def _fit_curve_wleastsq(f, x, y, dy, p0, dfdps=None, dfdp=None, **kw):
-    def fun(p):
-        return (y - f(x, *p)) / dy
+def _fit_curve_wleastsq(f, x, y, dy, p0, covy=None, dfdps=None, dfdp=None, **kw):
+    if covy is None:
+        def fun(p):
+            return (y - f(x, *p)) / dy
+    else:
+        L = linalg.cholesky(covy, lower=True)
+        def fun(p):
+           return linalg.solve_triangular(L, y - f(x, *p), lower=True) 
+    
     if not (dfdps is None and dfdp is None):
         rt = np.empty((len(y), len(p0)))
         if not (dfdps is None):
             def jac(p):
                 for i in range(len(p)):
                     rt[:,i] = -dfdps[i](x, *p) / dy
-                return rt
+                return rt if covy is None else linalg.solve_triangular(L, rt, lower=True)
         else:
             def jac(p):
                 rt[:] = -dfdp(x, *p) / dy.reshape(-1,1)
-                return rt
+                return rt if covy is None else linalg.solve_triangular(L, rt, lower=True)
     else:
         jac = None
     kw.update(_Nonedict(jac=jac))
+    
     result = optimize.least_squares(fun, p0, **kw)
     par = result.x
     cov = _least_squares_cov(result)
@@ -1274,8 +1281,12 @@ def fit_curve(f, x, y, dx=None, dy=None, covy=None, p0=None, pfix=None, bounds=N
         x = _asarray(x)
         y = np.asarray(y)
         dy = _asarray(dy)
-        if dy is None:
-            dy = 1
+        covy = _asarray_2d(covy)
+        if dy is None and covy is None:
+            if absolute_sigma:
+                raise ValueError('Neither dy or covy is given, but absolute_sigma is True.')
+            else:
+                dy = 1
         
         # run fit
         verbosity = max(0, min(print_info - 1, 2))
@@ -1283,7 +1294,7 @@ def fit_curve(f, x, y, dx=None, dy=None, covy=None, p0=None, pfix=None, bounds=N
         has_submethod = submethod != ''
         if has_submethod:
             kw.update(method=submethod)
-        par, cov, output = _fit_curve_wleastsq(f, x, y, dy, p0[pfree], dfdps=dfdps, dfdp=dfdp, verbose=verbosity, bounds=bounds, **kw)
+        par, cov, output = _fit_curve_wleastsq(f, x, y, dy, p0[pfree], covy=covy, dfdps=dfdps, dfdp=dfdp, verbose=verbosity, bounds=bounds, **kw)
         
         # check success
         success = output.success
@@ -1295,11 +1306,11 @@ def fit_curve(f, x, y, dx=None, dy=None, covy=None, p0=None, pfix=None, bounds=N
         if not absolute_sigma:
             cov *= chisq / (len(x) - len(par))
         if full_output:
-            deltay = y - f(x, *par)
+            fity = f(x, *par)
         par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
         kwargs = dict(tags=tags, par=par, cov=cov, chisq=chisq, check=check, success=success)
         if full_output:
-            kwargs.update(deltay=deltay, datay=y, method=method, rawoutput=output)
+            kwargs.update(fity=fity, datay=y, method=method, rawoutput=output)
         out = FitCurveOutput(**kwargs)
         
         # print result
@@ -1340,12 +1351,12 @@ def fit_curve(f, x, y, dx=None, dy=None, covy=None, p0=None, pfix=None, bounds=N
         # construct output
         chisq = 2 * output.cost
         cov *= chisq / (len(x) - len(par))
-        deltay = y - f(x, *par)
-        chisq = np.sum((deltay / (1 if dy is None else dy)) ** 2)
+        fity = f(x, *par)
+        chisq = np.sum(((y - fity) / (1 if dy is None else dy)) ** 2)
         par, cov = _apply_pfree_par_cov(par, cov, pfree, p0)
         kwargs = dict(tags=tags, par=par, cov=cov, chisq=chisq, check=check, success=success)
         if full_output:
-            kwargs.update(deltay=deltay, datay=y, method=method, rawoutput=output)
+            kwargs.update(fity=fity, datay=y, method=method, rawoutput=output)
         out = FitCurveOutput(**kwargs)
         
         # print result
