@@ -100,9 +100,9 @@ def _fit_curve_wleastsq(f, x, y, dy, p0, covy=None, dfdps=None, dfdp=None, **kw)
         def fun(p):
             return (y - f(x, *p)) / dy
     else:
-        L = linalg.cholesky(covy, lower=True)
+        L = linalg.cholesky(covy, lower=True) # L @ L.T == covy
         def fun(p):
-           return linalg.solve_triangular(L, y - f(x, *p), lower=True) 
+           return linalg.solve_triangular(L, y - f(x, *p), lower=True) # inv(L) @ (y - f(x, *p))
     
     if not (dfdps is None and dfdp is None):
         rt = np.empty((len(y), len(p0)))
@@ -1020,8 +1020,9 @@ def fit_curve(f, x, y, dx=None, dy=None, covy=None, p0=None, pfix=None, bounds=N
                 print()
             else:
                 print('stopping reason: {}'.format(', '.join(output.stopreason)))
-            print('Result:')
-            print(format_par_cov(par, cov))
+            print('chisq / dof (pvalue) = {:.1f} / {:d} ({:.3g})'.format(out.chisq, out.chisq_dof, out.chisq_pvalue))
+            print('absolute_sigma={}'.format(bool(absolute_sigma)))
+            print(format_par_cov(par, cov, labels=['par[{:d}]'.format(i) for i in range(len(out.par))]))
 
     ##### LINEARIZED ODR #####
 
@@ -2640,7 +2641,7 @@ def mme(x, unit, metertype='lab3', sqerr=False):
 _d = lambda x, n: int(("%.*e" % (n - 1, abs(x)))[0])
 _ap = lambda x, n: float("%.*e" % (n - 1, x))
 _nd = lambda x: math.floor(math.log10(abs(x))) + 1
-def _format_epositive(x, e, errsep=True, minexp=3):
+def _format_epositive(x, e, errsep=True, minexp=3, dot=True):
     # DECIDE NUMBER OF DIGITS
     if _d(e, 2) < 3:
         n = 2
@@ -2671,9 +2672,11 @@ def _format_epositive(x, e, errsep=True, minexp=3):
         return sx, se, ex
     short_se = se[-(n+1):] if '.' in se[-n:] else se[-n:]
     # ("%#.*g" % (n, e * 10 ** (n - _nd(e))))[:n]
+    if not dot:
+        short_se = short_se.replace('.', '')
     return sx + '(' + short_se + ')', '', ex
 
-def util_format(x, e, pm=None, percent=False, comexp=True, nicexp=False):
+def util_format(x, e, pm=None, percent=False, comexp=True, nicexp=False, dot=True):
     """
     Format a value with its uncertainty.
 
@@ -2691,6 +2694,8 @@ def util_format(x, e, pm=None, percent=False, comexp=True, nicexp=False):
         If True, write the exponent once.
     nicexp : bool
         If True, format exponent like ×10¹²³.
+    dot : bool
+        If True, eventually put decimals separator in uncertainty when pm=None.
 
     Returns
     -------
@@ -2715,7 +2720,7 @@ def util_format(x, e, pm=None, percent=False, comexp=True, nicexp=False):
     e = abs(float(e))
     if not math.isfinite(x) or not math.isfinite(e) or e == 0:
         return "%.3g %s %.3g" % (x, '+-', e)
-    sx, se, ex = _format_epositive(x, e, not (pm is None))
+    sx, se, ex = _format_epositive(x, e, errsep=not (pm is None), dot=dot)
     if ex == 0:
         es = ''
     elif nicexp:
@@ -2915,10 +2920,17 @@ def format_par_cov(par, cov=None, labels=None):
     Generate a LaTeX table:
     >>> print(format_par_cov(out.upar).latex())
     """
-    upar = par
-    par = unumpy.nominal_values(upar)
     if cov is None:
-        cov = uncertainties.covariance_matrix(upar)
+        cov = uncertainties.covariance_matrix(par)
+        par = unumpy.nominal_values(par)
+   
+    if isinstance(par, dict) and isinstance(cov, dict):
+        keys = list(par.keys())
+        par = [par[key] for key in keys]
+        cov = [[float(cov[keyi, keyj]) for keyj in keys] for keyi in keys]
+        if labels is None:
+            labels = keys
+    
     pars = xe(par, np.sqrt(np.diag(cov)))
     corr = fit_norm_cov(cov) * 100
     
@@ -2935,7 +2947,11 @@ def format_par_cov(par, cov=None, labels=None):
         for j in range(i + 1, len(corr)):
             c = corr[i, j]
             matrix[-1].append('{:.1f} %'.format(c) if math.isfinite(c) else str(c))
+    
     return TextMatrix(matrix, fill_side='left')
+
+def _array_like(obj):
+    return isinstance(obj, tuple) or isinstance(obj, list) or isinstance(obj, np.ndarray)
 
 class TextMatrix(object):
     """
@@ -2964,7 +2980,7 @@ class TextMatrix(object):
             Specify on which side shorter rows are filled.
         """
         # make sure matrix is at least 1D
-        if not hasattr(matrix, '__len__'):
+        if not _array_like(matrix):
             matrix = [matrix]
         matrix = copy.copy(matrix)
         
@@ -2972,7 +2988,7 @@ class TextMatrix(object):
         # and get lengths of all elements
         lengths = []
         for i in range(len(matrix)):
-            if not hasattr(matrix[i], '__len__'):
+            if not _array_like(matrix[i]):
                 matrix[i] = [matrix[i]]
             lengths.append(len(matrix[i]))
             
