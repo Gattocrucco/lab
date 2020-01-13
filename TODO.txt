@@ -35,6 +35,7 @@ aggiungere px, pxcov a odrpack calcolandolo dopo il fit.
 controllare che funzioni con x non array se dx is None
 covarianza degli y
 aggiungere bounds a odrpack con una trasformazione
+aggiungere bootstrap=numero di iterazioni, può addirittura diventare molto veloce buttando tutti i fit insieme nel minimizzatore se non ci sono correlazioni negli y. fit_curve_bootstrap fa molte cose ma non fa quello che di solito serve alla veloce, cioè un bootstrap sul fit che uno ha appena fatto.
 
 fit_curve_bootstrap
 supportare pfix
@@ -46,3 +47,6 @@ non funziona con tutti i campioni uguali o quasi, bisogna usare metodi bayesiani
 
 sembra esserci un problema con il print di ODRPACK, nel report finale sbaglia a scrivere gli errori, fare un bug report.
 altro problema di ODRPACK: out.y != y + out.eps, è una cosa tutta calcolata dentro DODRC quindi non è un problema del wrapper. Si tratta comunque di differenze ragionevoli, può darsi che sia volutamente un'approssimazione sufficiente per non valutare una volta in più la funzione.
+
+xe, xep, util_format
+supportare gli ufloat

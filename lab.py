@@ -93,7 +93,7 @@ def _least_squares_cov(result):
     threshold = np.finfo(float).eps * max(result.jac.shape) * s[0]
     s = s[s > threshold]
     VT = VT[:s.size]
-    return np.dot(VT.T / s**2, VT)    
+    return np.dot(VT.T / s**2, VT)
 
 def _fit_curve_wleastsq(f, x, y, dy, p0, covy=None, dfdps=None, dfdp=None, **kw):
     if covy is None:
